@@ -58,6 +58,7 @@ typedef enum statementType
   Other,
   Single_Shard_Transaction,
   SingleShardTransaction,
+  StmtRetries,
   Transaction,
   AggregatePushdown,
   CatCacheMisses,
@@ -184,6 +185,7 @@ set_metric_names(void)
       ybpgm_table[Single_Shard_Transaction].name, YSQL_METRIC_PREFIX "Single_Shard_Transactions");
 
   strcpy(ybpgm_table[SingleShardTransaction].name, YSQL_METRIC_PREFIX "SingleShardTransactions");
+  strcpy(ybpgm_table[StmtRetries].name, YSQL_METRIC_PREFIX "StmtRetries");
   strcpy(ybpgm_table[Transaction].name, YSQL_METRIC_PREFIX "Transactions");
   strcpy(ybpgm_table[AggregatePushdown].name, YSQL_METRIC_PREFIX "AggregatePushdowns");
   strcpy(ybpgm_table[CatCacheMisses].name, YSQL_METRIC_PREFIX "CatalogCacheMisses");
@@ -501,6 +503,11 @@ static void
 ybpgm_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count,
                  bool execute_once)
 {
+  if (YbStatementAttemptCount > 1)
+  {
+		ybpgm_StoreCount(StmtRetries,0,1);
+  }
+
   IncStatementNestingLevel();
   PG_TRY();
   {

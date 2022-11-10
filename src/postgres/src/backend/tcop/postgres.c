@@ -4519,6 +4519,8 @@ yb_attempt_to_restart_on_error(int attempt,
 				 * We shouldn't really be able to reach here. If yb_is_restart_possible()
 				 * was true, the error should have been either of kReadRestart/kConflict
 				 */
+				YB_STATEMENT_COMPLETE();
+
 				MemoryContextSwitchTo(error_context);
 				PG_RE_THROW();
 			}
@@ -4558,12 +4560,16 @@ yb_attempt_to_restart_on_error(int attempt,
 				 * We shouldn't really be able to reach here. If yb_is_restart_possible()
 				 * was true, the error should have been either of kReadRestart/kConflict
 				 */
+				YB_STATEMENT_COMPLETE();
+
 				MemoryContextSwitchTo(error_context);
 				PG_RE_THROW();
 			}
 		}
 	} else {
 		/* if we shouldn't restart - propagate the error */
+
+		YB_STATEMENT_COMPLETE();
 
 		if (rc_ignoring_ddl_statement) {
 			edata->message = psprintf(
@@ -4619,11 +4625,16 @@ yb_exec_query_wrapper(MemoryContext exec_context,
 					  const void* functor_context)
 {
 	bool retry = true;
+	YB_STATEMENT_START();
+
 	for (int attempt = 0; retry; ++attempt)
 	{
+		YB_STATEMENT_ATTEMPT();
 		yb_exec_query_wrapper_one_attempt(
 			exec_context, restart_data, functor, functor_context, attempt, &retry);
 	}
+
+	YB_STATEMENT_COMPLETE();
 }
 
 static void

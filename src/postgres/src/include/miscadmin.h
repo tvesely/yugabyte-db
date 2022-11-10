@@ -174,6 +174,24 @@ extern char OutputFileName[];
 extern PGDLLIMPORT char my_exec_path[];
 extern char pkglib_path[];
 
+/*
+ * YugabyteDB Specific from utils/init/globals.c
+ */
+extern PGDLLIMPORT uint32 YbStatementAttemptCount;
+
+#define YB_STATEMENT_START() \
+do { \
+	Assert(YbStatementAttemptCount == 0); \
+} while(0)
+
+#define YB_STATEMENT_ATTEMPT()  (YbStatementAttemptCount++)
+
+#define YB_STATEMENT_COMPLETE() \
+do { \
+	Assert(YbStatementAttemptCount > 0); \
+	YbStatementAttemptCount = 0; \
+} while(0)
+
 #ifdef EXEC_BACKEND
 extern char postgres_exec_path[];
 #endif
