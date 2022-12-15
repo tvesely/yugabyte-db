@@ -1,0 +1,52 @@
+Parsed test spec with 2 sessions
+
+starting permutation: s2s_start s1a s2a s1b s1c s2b s1b
+step s2s_start: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s1a: UPDATE PRODUCTS SET price = 3 WHERE product_no = 1;
+step s2a: UPDATE PRODUCTS SET discounted_price = 4 WHERE product_no = 1; <waiting ...>
+step s1b: SELECT price, discounted_price FROM products;
+price          discounted_price
+
+3              1              
+step s1c: COMMIT;
+step s2a: <... completed>
+error in steps s1c s2a: ERROR:  could not serialize access due to concurrent update
+step s2b: COMMIT;
+step s1b: SELECT price, discounted_price FROM products;
+price          discounted_price
+
+3              1              
+
+starting permutation: s2rr_start s1a s2a s1b s1c s2b s1b
+step s2rr_start: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1a: UPDATE PRODUCTS SET price = 3 WHERE product_no = 1;
+step s2a: UPDATE PRODUCTS SET discounted_price = 4 WHERE product_no = 1; <waiting ...>
+step s1b: SELECT price, discounted_price FROM products;
+price          discounted_price
+
+3              1              
+step s1c: COMMIT;
+step s2a: <... completed>
+error in steps s1c s2a: ERROR:  could not serialize access due to concurrent update
+step s2b: COMMIT;
+step s1b: SELECT price, discounted_price FROM products;
+price          discounted_price
+
+3              1              
+
+starting permutation: s2rc_start s1a s2a s1b s1c s2b s1b
+step s2rc_start: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1a: UPDATE PRODUCTS SET price = 3 WHERE product_no = 1;
+step s2a: UPDATE PRODUCTS SET discounted_price = 4 WHERE product_no = 1; <waiting ...>
+step s1b: SELECT price, discounted_price FROM products;
+price          discounted_price
+
+3              1              
+step s1c: COMMIT;
+step s2a: <... completed>
+error in steps s1c s2a: ERROR:  new row for relation "products" violates check constraint "products_check"
+step s2b: COMMIT;
+step s1b: SELECT price, discounted_price FROM products;
+price          discounted_price
+
+3              1              

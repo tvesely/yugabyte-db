@@ -14,6 +14,7 @@ test: yb-modification-followed-by-lock
 test: yb-skip-locked-after-update
 test: yb-skip-locked-single-shard-transaction
 
+test: yb-check-constraint-locking
 # TODO:
 # 1. Test to ensure that new sub txns inherit ybDataSentForCurrQuery and parent txns
 #    inherit it back from nested sub txns once they are removed.
