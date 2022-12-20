@@ -898,7 +898,7 @@ bool YBCExecuteUpdate(Relation rel,
 	}
 
 	/* Column references to prepare data to evaluate pushed down expressions */
-	foreach (lc, mt_plan->ybColumnRefs)
+	foreach (lc, mt_plan->ybColumnRefs) // TODO: is this the right place to put column references for check constraints?
 	{
 		YbExprParamDesc *colref = lfirst_node(YbExprParamDesc, lc);
 		YBCPgTypeAttrs type_attrs = { colref->typmod };

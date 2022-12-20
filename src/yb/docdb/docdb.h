@@ -82,6 +82,9 @@ namespace docdb {
 
 class DocOperation;
 
+// Taylor notes: This appears to be where update gets its locks, but probably only in-memory locks
+// We must take in-memory locks as well as write the intents later
+
 // This function prepares the transaction by taking locks. The set of keys locked are returned to
 // the caller via the keys_locked argument (because they need to be saved and unlocked when the
 // transaction commits). A flag is also returned to indicate if any of the write operations

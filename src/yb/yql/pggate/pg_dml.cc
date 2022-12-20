@@ -146,6 +146,8 @@ Status PgDml::AppendColumnRef(PgExpr *colref, bool is_primary) {
   return Status::OK();
 }
 
+// When the DML column is read for a check constraint, but not written, should we mark it as
+// read requested?
 Result<const PgColumn&> PgDml::PrepareColumnForRead(int attr_num, LWPgsqlExpressionPB *target_pb) {
   // Find column from targeted table.
   PgColumn& col = VERIFY_RESULT(target_.ColumnForAttr(attr_num));

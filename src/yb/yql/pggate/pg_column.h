@@ -71,6 +71,7 @@ class PgColumn {
     return read_requested_;
   }
 
+  // Should this be how we set the read mark for a column write, or do we need a new attribute here?
   void set_read_requested(const bool value) {
     read_requested_ = value;
   }

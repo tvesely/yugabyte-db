@@ -222,6 +222,9 @@ class PgSession::RunHelper {
       return Status::OK();
     }
 
+    /* Is this how we determine when to add row marks to the keys? Is it the isolation level that
+     * determines that, or is it still the row marks?
+     */
     const auto txn_priority_requirement =
       pg_session_.GetIsolationLevel() == PgIsolationLevel::READ_COMMITTED
         ? kHighestPriority :

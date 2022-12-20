@@ -680,10 +680,10 @@ Status PgsqlWriteOperation::UpdateColumn(
 
   return Status::OK();
 }
-
+// TODO: This is where we apply an update operation, is it also where we need to set intents?
 Status PgsqlWriteOperation::ApplyUpdate(const DocOperationApplyData& data) {
   QLTableRow table_row;
-  RETURN_NOT_OK(ReadColumns(data, &table_row));
+  RETURN_NOT_OK(ReadColumns(data, &table_row)); // This appears to be where we actually read the columns that are specified in column_refs
   if (table_row.IsEmpty()) {
     // Row not found.
     response_->set_skipped(true);
@@ -1003,6 +1003,7 @@ Status PgsqlWriteOperation::PopulateResultSet(const QLTableRow& table_row) {
   return Status::OK();
 }
 
+// This appears to be the function that figures out which keys to lock
 Status PgsqlWriteOperation::GetDocPaths(GetDocPathsMode mode,
                                         DocPathsToLock *paths,
                                         IsolationLevel *level) const {
@@ -1057,7 +1058,7 @@ Status PgsqlWriteOperation::GetDocPaths(GetDocPathsMode mode,
           request_.stmt_type() == PgsqlWriteRequestPB::PGSQL_UPSERT) {
         column_values = &request_.column_values();
       } else if (request_.stmt_type() == PgsqlWriteRequestPB::PGSQL_UPDATE) {
-        column_values = &request_.column_new_values();
+        column_values = &request_.column_new_values(); // Is this where we actually set the intents to write?
       }
 
       if (column_values != nullptr && !column_values->empty()) {

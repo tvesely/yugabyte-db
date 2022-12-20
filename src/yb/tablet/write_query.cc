@@ -478,8 +478,9 @@ docdb::ConflictManagementPolicy GetConflictManagementPolicy(
 Status WriteQuery::DoExecute() {
   auto tablet = VERIFY_RESULT(tablet_safe());
   auto& write_batch = *request().mutable_write_batch();
-  isolation_level_ = VERIFY_RESULT(tablet->GetIsolationLevelFromPB(write_batch));
-  const RowMarkType row_mark_type = GetRowMarkTypeFromPB(write_batch);
+
+  isolation_level_ = VERIFY_RESULT(tablet->GetIsolationLevelFromPB(write_batch)); 
+  const RowMarkType row_mark_type = GetRowMarkTypeFromPB(write_batch); // This is where we get our row mark types
   const auto& metadata = *tablet->metadata();
 
   const bool transactional_table = metadata.schema()->table_properties().is_transactional() ||
@@ -491,12 +492,14 @@ Status WriteQuery::DoExecute() {
         << operation_->ToString();
   }
 
+  // This appears to get in memory locks
   docdb::PartialRangeKeyIntents partial_range_key_intents(metadata.UsePartialRangeKeyIntents());
   prepare_result_ = VERIFY_RESULT(docdb::PrepareDocWriteOperation(
       doc_ops_, write_batch.read_pairs(), tablet->metrics()->write_lock_latency,
       isolation_level_, kind(), row_mark_type, transactional_table, write_batch.has_transaction(),
       deadline(), partial_range_key_intents, tablet->shared_lock_manager()));
 
+  // The in-memory locks should be taken at this point
   TEST_SYNC_POINT("WriteQuery::DoExecute::PreparedDocWriteOps");
 
   auto* transaction_participant = tablet->transaction_participant();
@@ -676,7 +679,7 @@ Status WriteQuery::DoCompleteExecute() {
     return Status::OK();
   }
 
-  docdb_locks_ = std::move(prepare_result_.lock_batch);
+  docdb_locks_ = std::move(prepare_result_.lock_batch); // AH HA! This appears to be where we actually set the docdb locks to be set
 
   return Status::OK();
 }

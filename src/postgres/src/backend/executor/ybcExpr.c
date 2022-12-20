@@ -307,7 +307,7 @@ bool yb_pushdown_walker(Node *node, List **params)
 				bool		found = false;
 
 				/* Check if the column reference has already been collected */
-				foreach(lc, *params)
+				foreach(lc, *params) // When column references to pushable expressions are found, this is where those references are flagged.
 				{
 					YbExprParamDesc *param = (YbExprParamDesc *) lfirst(lc);
 					if (param->attno == attno)

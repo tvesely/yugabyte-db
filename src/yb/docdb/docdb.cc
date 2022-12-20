@@ -120,6 +120,7 @@ struct DetermineKeysToLockResult {
   }
 };
 
+// This appears to be where we determine keys to lock in the write path
 Result<DetermineKeysToLockResult> DetermineKeysToLock(
     const std::vector<std::unique_ptr<DocOperation>>& doc_write_ops,
     const ArenaList<LWKeyValuePairPB>& read_pairs,

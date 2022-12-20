@@ -3124,7 +3124,7 @@ yb_single_row_update_or_delete_path(PlannerInfo *root,
 	}
 
 	/* Return column references collected before */
-	*column_refs = colrefs;
+	*column_refs = colrefs; // When there are references to columns for check constraints, can I piggy-back off this variable?
 
 	RelationClose(relation);
 	return true;
@@ -3137,7 +3137,7 @@ yb_single_row_update_or_delete_path(PlannerInfo *root,
  *	  Returns a Plan node.
  */
 static ModifyTable *
-create_modifytable_plan(PlannerInfo *root, ModifyTablePath *best_path)
+create_modifytable_plan(PlannerInfo *root, ModifyTablePath *best_path) // TODO: should probably add the column references for check constraints here
 {
 	ModifyTable *plan;
 	List	   *subplans = NIL;

@@ -795,7 +795,9 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 		case T_ProjectSet:
 			set_upper_references(root, plan, rtoffset);
 			break;
-		case T_ModifyTable:
+		case T_ModifyTable: /* TODO: This appears to be where we set references to the result \
+                             *       relation- should this be where I add the check constraint row references?
+                             */
 			{
 				ModifyTable *splan = (ModifyTable *) plan;
 

@@ -351,6 +351,7 @@ Status ReadQuery::DoPerform() {
   host_port_pb_.set_host(remote_address.address().to_string());
   host_port_pb_.set_port(remote_address.port());
 
+  // This if statement is where read queries actually write intents
   if (serializable_isolation || has_row_mark) {
     auto deadline = context_.GetClientDeadline();
     auto query = std::make_unique<tablet::WriteQuery>(
@@ -392,7 +393,7 @@ Status ReadQuery::DoPerform() {
         peer->Enqueue(self.get());
       }
     });
-    leader_peer.peer->WriteAsync(std::move(query));
+    leader_peer.peer->WriteAsync(std::move(query)); // The intent is written in here
     return Status::OK();
   }
 
