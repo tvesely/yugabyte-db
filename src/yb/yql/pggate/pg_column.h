@@ -19,6 +19,7 @@
 
 #include "yb/common/common_fwd.h"
 #include "yb/common/ql_datatype.h"
+#include "yb/common/row_mark.h"
 
 namespace yb {
 namespace pggate {
@@ -84,6 +85,18 @@ class PgColumn {
     write_requested_ = value;
   }
 
+  RowMarkType lock_type() const {
+    return lock_requested_;
+  }
+
+  bool lock_requested() const {
+    return IsValidRowMarkType(lock_requested_);
+  }
+
+  void set_lock_requested(const RowMarkType value) {
+    lock_requested_ = value;
+  }
+
   bool is_partition() const;
   bool is_primary() const;
   bool is_virtual_column() const;
@@ -128,11 +141,14 @@ class PgColumn {
   // Protobuf for new-values of a column in the tuple.
   LWPgsqlExpressionPB *assign_pb_ = nullptr;
 
-  // Wether or not this column must be read from DB for the SQL request.
+  // Whether this column must be read from DB for the SQL request.
   bool read_requested_ = false;
 
-  // Wether or not this column will be written for the request.
+  // Whether this column will be written for the request.
   bool write_requested_ = false;
+
+  // Whether this column should be individually locked
+  RowMarkType lock_requested_ = RowMarkType::ROW_MARK_ABSENT;
 
   int pg_typid_ = 0;
 

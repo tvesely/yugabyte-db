@@ -44,7 +44,7 @@ using ResolutionCallback = boost::function<void(const Result<HybridTime>&)>;
 // attempting to detect conflicts is T0):
 //
 // 1. Wait-on-Conflict:
-//    (a) If T0 tries to write an intent or data that conflicts with data modififed by committed
+//    (a) If T0 tries to write an intent or data that conflicts with data modified by committed
 //        transactions, T0 fails  (i.e., tserver returns kConflict to YSQL)
 //    (b) If T0 tries to write an intent or data that conflicts with intents of pending
 //        transactions, it will wait for all pending transactions to finish (i.e., commit or abort)

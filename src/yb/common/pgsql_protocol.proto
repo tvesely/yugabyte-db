@@ -112,12 +112,14 @@ message PgsqlColumnRefsPB {
 // - typid, typmod are needed to convert DocDB values to Postgres format (Datum and isnull pair).
 // They must be specified if used in an expression evaluated by PGgate.
 // - collid is for future collations support
+// - row_mark_type is used to mark a row for locking
 message PgsqlColRefPB {
   optional int32 column_id = 1;
   optional int32 attno = 2;
   optional int32 typid = 3;
   optional int32 typmod = 4;
   optional int32 collid = 5;
+  optional RowMarkType row_mark_type = 6;
 }
 
 // ColumnValue is a value to be assigned to a table column by DocDB while executing a PGSQL request.

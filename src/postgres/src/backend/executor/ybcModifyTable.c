@@ -786,27 +786,25 @@ bool YBCExecuteUpdate(Relation rel,
 					  bool target_tuple_fetched,
 					  bool is_single_row_txn,
 					  Bitmapset *updatedCols,
+					  Bitmapset *checkConstraintRefs,
 					  bool canSetTag)
 {
 	// The input heap tuple's descriptor
-	TupleDesc		inputTupleDesc = slot->tts_tupleDescriptor;
+	TupleDesc inputTupleDesc = slot->tts_tupleDescriptor;
 	// The target table tuple's descriptor
-	TupleDesc		outputTupleDesc = RelationGetDescr(rel);
-	Oid				dboid = YBCGetDatabaseOid(rel);
-	Oid				relid = RelationGetRelid(rel);
-	YBCPgStatement	update_stmt = NULL;
-	Datum			ybctid;
-	ListCell	   *lc;
+	TupleDesc	   outputTupleDesc = RelationGetDescr(rel);
+	Oid			   dboid = YBCGetDatabaseOid(rel);
+	Oid			   relid = RelationGetRelid(rel);
+	YBCPgStatement update_stmt = NULL;
+	Datum		   ybctid;
+	ListCell	  *lc;
 
 	/* is_single_row_txn always implies target tuple wasn't fetched. */
 	Assert(!is_single_row_txn || !target_tuple_fetched);
 
 	/* Create update statement. */
-	HandleYBStatus(YBCPgNewUpdate(dboid,
-								  relid,
-								  is_single_row_txn,
-								  YBCIsRegionLocal(rel),
-								  &update_stmt));
+	HandleYBStatus(YBCPgNewUpdate(dboid, relid, is_single_row_txn,
+								  YBCIsRegionLocal(rel), &update_stmt));
 
 	/*
 	 * Look for ybctid. Raise error if ybctid is not found.
@@ -827,9 +825,9 @@ bool YBCExecuteUpdate(Relation rel,
 	YBCBindTupleId(update_stmt, ybctid);
 
 	/* Assign new values to the updated columns for the current row. */
-	AttrNumber	minattr		= YBGetFirstLowInvalidAttributeNumber(rel);
-	bool		whole_row	= bms_is_member(InvalidAttrNumber, updatedCols);
-	ListCell   *pushdown_lc	= list_head(mt_plan->ybPushdownTlist);
+	AttrNumber minattr = YBGetFirstLowInvalidAttributeNumber(rel);
+	bool	   whole_row = bms_is_member(InvalidAttrNumber, updatedCols);
+	ListCell  *pushdown_lc = list_head(mt_plan->ybPushdownTlist);
 
 	Bitmapset *pkey PG_USED_FOR_ASSERTS_ONLY = YBGetTablePrimaryKeyBms(rel);
 
@@ -838,7 +836,7 @@ bool YBCExecuteUpdate(Relation rel,
 		FormData_pg_attribute *att_desc = TupleDescAttr(outputTupleDesc, idx);
 
 		AttrNumber attnum = att_desc->attnum;
-		int32_t type_id = att_desc->atttypid;
+		int32_t	   type_id = att_desc->atttypid;
 
 		/* Skip virtual (system) and dropped columns */
 		if (!IsRealYBColumn(rel, attnum))
@@ -850,6 +848,7 @@ bool YBCExecuteUpdate(Relation rel,
 		/*
 		 * Regular updates should not mention primary key columns, as they are
 		 * supposed to go through YBCExecuteUpdateReplace routine.
+		 *    TODO: should YBCExecuteUpdateReplace also lock tuples?
 		 */
 		Assert(!bms_is_member(attnum - minattr, pkey));
 
@@ -858,24 +857,26 @@ bool YBCExecuteUpdate(Relation rel,
 			((TargetEntry *) lfirst(pushdown_lc))->resno == attnum)
 		{
 			TargetEntry *tle = (TargetEntry *) lfirst(pushdown_lc);
-			Expr *expr = YbExprInstantiateParams(tle->expr, estate);
-			YBCPgExpr ybc_expr = YBCNewEvalExprCall(update_stmt, expr);
+			Expr		*expr = YbExprInstantiateParams(tle->expr, estate);
+			YBCPgExpr	 ybc_expr = YBCNewEvalExprCall(update_stmt, expr);
 			HandleYBStatus(YBCPgDmlAssignColumn(update_stmt, attnum, ybc_expr));
 			pushdown_lc = lnext(pushdown_lc);
 		}
 		else
 		{
-			bool is_null = false;
+			bool  is_null = false;
 			Datum d = heap_getattr(tuple, attnum, inputTupleDesc, &is_null);
 			/*
 			 * For system relations, since we assign values to non-primary-key
 			 * columns only, pass InvalidOid as collation_id to skip computing
 			 * collation sortkeys.
 			 */
-			Oid collation_id = IsCatalogRelation(rel)
-				? InvalidOid
-				: YBEncodingCollation(update_stmt, attnum, att_desc->attcollation);
-			YBCPgExpr ybc_expr = YBCNewConstant(update_stmt, type_id, collation_id, d, is_null);
+			Oid		  collation_id = IsCatalogRelation(rel) ?
+										 InvalidOid :
+										 YBEncodingCollation(update_stmt, attnum,
+															 att_desc->attcollation);
+			YBCPgExpr ybc_expr =
+				YBCNewConstant(update_stmt, type_id, collation_id, d, is_null);
 
 			HandleYBStatus(YBCPgDmlAssignColumn(update_stmt, attnum, ybc_expr));
 		}
@@ -888,28 +889,36 @@ bool YBCExecuteUpdate(Relation rel,
 	foreach (lc, mt_plan->ybReturningColumns)
 	{
 		YbExprParamDesc *colref = lfirst_node(YbExprParamDesc, lc);
-		YBCPgTypeAttrs type_attrs = { colref->typmod};
-		YBCPgExpr yb_expr = YBCNewColumnRef(update_stmt,
-											colref->attno,
-											colref->typid,
-											colref->collid,
-											&type_attrs);
+		YBCPgTypeAttrs	 type_attrs = {colref->typmod};
+		YBCPgExpr		 yb_expr = YBCNewColumnRef(update_stmt, colref->attno,
+												   colref->typid, colref->collid,
+												   &type_attrs);
 		HandleYBStatus(YBCPgDmlAppendTarget(update_stmt, yb_expr));
 	}
 
 	/* Column references to prepare data to evaluate pushed down expressions */
-	foreach (lc, mt_plan->ybColumnRefs) // TODO: is this the right place to put column references for check constraints?
+	foreach (lc, mt_plan->ybColumnRefs)
 	{
 		YbExprParamDesc *colref = lfirst_node(YbExprParamDesc, lc);
-		YBCPgTypeAttrs type_attrs = { colref->typmod };
-		YBCPgExpr yb_expr = YBCNewColumnRef(update_stmt,
-											colref->attno,
-											colref->typid,
-											colref->collid,
-											&type_attrs);
+		YBCPgTypeAttrs	 type_attrs = {colref->typmod};
+		YBCPgExpr		 yb_expr = YBCNewColumnRef(update_stmt, colref->attno,
+												   colref->typid, colref->collid,
+												   &type_attrs);
 		HandleYBStatus(YbPgDmlAppendColumnRef(update_stmt, yb_expr, true));
 	}
+	for (int idx = 0; idx < outputTupleDesc->natts; idx++)
+	{
+		FormData_pg_attribute *att_desc = TupleDescAttr(outputTupleDesc, idx);
 
+		AttrNumber attnum  = att_desc->attnum;
+
+		if (bms_is_member(attnum - minattr, checkConstraintRefs)) {
+			/* This column is referenced by a check constraint, but is not directly referenced
+			 * in the statement, so we need to explicitly mark it to be locked. */
+			HandleYBStatus(YbPgDmlAppendColumnLockRef(update_stmt, attnum, ROW_MARK_KEYSHARE));
+			// TODO: the primary key should always be locked, so should I assert that it is not selected here?
+		}
+	}
 	/* Execute the statement. */
 
 	/*

@@ -364,6 +364,9 @@ YBCStatus YbPgDmlAppendQual(YBCPgStatement handle, YBCPgExpr qual, bool is_prima
 // how to convert values from the DocDB formats to use them to evaluate Postgres expressions.
 YBCStatus YbPgDmlAppendColumnRef(YBCPgStatement handle, YBCPgExpr colref, bool is_primary);
 
+// Add a column reference indicate that this column is referred to indirectly. // TODO: this needs to be a better explanation
+YBCStatus YbPgDmlAppendColumnLockRef(YBCPgStatement handle, int attr_num, int lock_type);
+
 // Binding Columns: Bind column with a value (expression) in a statement.
 // + This API is used to identify the rows you want to operate on. If binding columns are not
 //   there, that means you want to operate on all rows (full scan). You can view this as a

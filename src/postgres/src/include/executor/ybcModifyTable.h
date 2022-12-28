@@ -165,6 +165,7 @@ extern bool YBCExecuteUpdate(Relation rel,
 							 bool target_tuple_fetched,
 							 bool is_single_row_txn,
 							 Bitmapset *updatedCols,
+							 Bitmapset *checkConstraintRefs,
 							 bool canSetTag);
 
 /*

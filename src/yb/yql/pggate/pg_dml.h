@@ -51,6 +51,9 @@ class PgDml : public PgStatement {
   // Other PgExpr kinds are automatically scanned and their column references are appended.
   Status AppendColumnRef(PgExpr *colref, bool is_primary);
 
+  // TODO: add documentation here
+  Status AppendColumnLockRef(int attr_num, RowMarkType lock_type);
+
   // Prepare column for both ends.
   // - Prepare protobuf to communicate with DocDB.
   // - Prepare PgExpr to send data back to Postgres layer.
@@ -155,7 +158,7 @@ class PgDml : public PgStatement {
   // Clear previously allocated PgsqlColRefPB entries from the protobuf request
   virtual void ClearColRefPBs() = 0;
 
-  // Allocate a PgsqlColRefPB entriy in the protobuf request
+  // Allocate a PgsqlColRefPB entry in the protobuf request
   virtual LWPgsqlColRefPB *AllocColRefPB() = 0;
 
   template<class Request>

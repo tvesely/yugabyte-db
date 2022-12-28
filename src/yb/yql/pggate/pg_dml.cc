@@ -146,8 +146,22 @@ Status PgDml::AppendColumnRef(PgExpr *colref, bool is_primary) {
   return Status::OK();
 }
 
-// When the DML column is read for a check constraint, but not written, should we mark it as
-// read requested?
+Status PgDml::AppendColumnLockRef(int attr_num, RowMarkType lock_type) {
+  PgColumn& col = VERIFY_RESULT(target_.ColumnForAttr(attr_num));
+  if (!IsValidRowMarkType(lock_type))
+    return STATUS_FORMAT(InvalidArgument, "Invalid RowMarkType $0", lock_type);
+
+  // TODO: what to do about virtual columns? Can virtual columns even be locked? For now, just throw an error
+  if(col.is_virtual_column())
+    return STATUS_FORMAT(InvalidArgument, "virtual columns cannot be locked");
+
+  // If the row mark is already set, pick the strongest type
+  col.set_lock_requested(GetStrongestRowMarkType({col.lock_type(), lock_type}));
+  col.set_read_requested(true);
+
+  return Status::OK();
+}
+
 Result<const PgColumn&> PgDml::PrepareColumnForRead(int attr_num, LWPgsqlExpressionPB *target_pb) {
   // Find column from targeted table.
   PgColumn& col = VERIFY_RESULT(target_.ColumnForAttr(attr_num));
@@ -220,6 +234,9 @@ void PgDml::ColRefsToPB() {
         col_ref->set_typid(col.pg_typid());
         col_ref->set_typmod(col.pg_typmod());
         col_ref->set_collid(col.pg_collid());
+      }
+      if(col.lock_requested()) {
+        col_ref->set_row_mark_type(col.lock_type());
       }
     }
   }

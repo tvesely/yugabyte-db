@@ -1207,6 +1207,10 @@ Status PgApiImpl::DmlAppendColumnRef(PgStatement *handle, PgExpr *colref, bool i
   return down_cast<PgDml*>(handle)->AppendColumnRef(colref, is_primary);
 }
 
+Status PgApiImpl::DmlAppendColumnLockRef(PgStatement *handle, int attr_num, int lock_type) {
+  return down_cast<PgDml*>(handle)->AppendColumnLockRef(attr_num, static_cast<RowMarkType>(lock_type));
+}
+
 Status PgApiImpl::DmlBindColumn(PgStatement *handle, int attr_num, PgExpr *attr_value) {
   return down_cast<PgDml*>(handle)->BindColumn(attr_num, attr_value);
 }
