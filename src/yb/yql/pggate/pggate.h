@@ -619,6 +619,7 @@ class PgApiImpl {
   // Sets the specified timeout in the rpc service.
   void SetTimeout(int timeout_ms);
 
+  Result<client::NodeLockInfo> GetLockStatusData(const std::string& table_id, const std::string& transaction_id);
   Result<client::TabletServersInfo> ListTabletServers();
 
   Status GetIndexBackfillProgress(std::vector<PgObjectId> oids,

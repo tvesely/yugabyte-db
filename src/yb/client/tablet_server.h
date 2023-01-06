@@ -12,6 +12,9 @@
 //
 
 #include <string>
+#include "yb/common/transaction.pb.h"
+#include "yb/common/hybrid_time.h"
+#include "yb/tserver/pg_client.pb.h"
 #pragma once
 
 namespace yb {

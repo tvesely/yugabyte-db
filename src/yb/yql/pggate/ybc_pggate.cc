@@ -1401,6 +1401,124 @@ void YBCSetTimeout(int timeout_ms, void* extra) {
   pgapi->SetTimeout(timeout_ms);
 }
 
+YBCStatus YBCGetLockStatusData(
+    YBCPgOid database, YBCPgOid relation, const char *transaction_id, YBCLockData **lock_data) {
+  const std::string table_id(relation != kInvalidOid ? GetPgsqlTableId(database, relation) : "");
+  const std::string transaction(transaction_id ? transaction_id : "");
+
+  const auto locks_result = pgapi->GetLockStatusData(table_id, transaction);
+  if (!locks_result.ok()) {
+    return ToYBCStatus(locks_result.status());
+  }
+  const auto &nodes = locks_result.get();
+
+  uint nelements = 0;
+  for (auto &node : nodes)
+    for (auto &tab : node.tablet_lock_infos())
+      nelements += tab.locks_size();
+
+  *lock_data = (YBCLockData *)YBCPAlloc(sizeof(YBCLockData));
+
+  YBCLockData *dest = *lock_data;
+  dest->nelements = nelements;
+
+  if (nelements == 0) return YBCStatusOK();
+
+  auto *locks = (YBCLockInstanceData *)YBCPAlloc(sizeof(YBCLockInstanceData) * nelements);
+
+  dest->locks = locks;
+
+  int el = 0;
+  for (auto &node : nodes) {
+    for (auto tab : node.tablet_lock_infos()) {
+      for (auto &l : tab.locks()) {
+        YBCLockInstanceData *lock = &dest->locks[el];
+
+        const auto database_id_result = GetPgsqlDatabaseOidByTableId(tab.table_id());
+        if (!database_id_result.ok()) {
+          return ToYBCStatus(database_id_result.status());
+        }
+        YBCPgOid database_oid = database_id_result.get();
+
+        lock->database = database_oid;
+
+        const auto table_oid_result = GetPgsqlTableOid(tab.table_id());
+        if (!table_oid_result.ok()) {
+          return ToYBCStatus(table_oid_result.status());
+        }
+        YBCPgOid table_oid = table_oid_result.get();
+
+        lock->relation = table_oid;
+
+        // lock->pid = YBCFindTransactionPid(); // TODO: how to associate the PID?
+
+        lock->granted = l.has_wait_end_ht() ? true : false;
+        lock->single_shard = l.has_transaction_id() ? false : true;
+
+        lock->wait_start = nullptr;
+        if (l.has_wait_start_ht()) {
+          lock->wait_start = (uint64_t *)YBCPAlloc(sizeof(uint64_t));
+          *lock->wait_start = HybridTime(l.wait_start_ht()).GetPhysicalValueMicros();
+        }
+
+        lock->wait_end = nullptr;
+        if (l.has_wait_end_ht()) {
+          lock->wait_end = (uint64_t *)YBCPAlloc(sizeof(uint64_t));
+          *lock->wait_end = HybridTime(l.wait_end_ht()).GetPhysicalValueMicros();
+        }
+
+        lock->num_mode_cols = l.modes().size();
+        if (lock->num_mode_cols > 0) {
+          lock->mode_cols= (const char **)YBCPAlloc(lock->num_mode_cols * sizeof(const char *));
+
+          int j = 0;
+          for (const auto &mode : l.modes()) {
+            lock->mode_cols[j] = YBCPAllocStdString(LockMode_Name(static_cast<LockMode>(mode)));
+            j++;
+          }
+        }
+
+        lock->is_explicit = l.is_explicit();
+
+        lock->node = YBCPAllocStdString(node.permanent_uuid());
+        lock->tablet_id = YBCPAllocStdString(tab.tablet_id());
+
+        lock->transaction_id = YBCPAllocStdString(l.transaction_id());
+        lock->subtransaction_id = l.subtransaction_id();
+
+        lock->num_hash_cols = l.hash_cols().size();
+        if (lock->num_hash_cols > 0) {
+          lock->hash_cols = (const char **)YBCPAlloc(lock->num_hash_cols * sizeof(const char *));
+
+          int j = 0;
+          for (const auto &col : l.hash_cols()) {
+            lock->hash_cols[j] = YBCPAllocStdString(col);
+            j++;
+          }
+        }
+
+        lock->num_range_cols = l.range_cols().size();
+        if (lock->num_range_cols > 0) {
+          lock->range_cols = (const char **)YBCPAlloc(lock->num_range_cols * sizeof(const char *));
+
+          int j = 0;
+          for (const auto &col : l.range_cols()) {
+            lock->range_cols[j] = YBCPAllocStdString(col);
+            j++;
+          }
+        }
+
+        lock->column_id = l.column_id();
+        lock->is_full_pk = l.is_full_pk();
+
+        el++;
+      }
+    }
+  }
+
+  return YBCStatusOK();
+}
+
 YBCStatus YBCGetTabletServerHosts(YBCServerDescriptor **servers, size_t *count) {
   const auto result = pgapi->ListTabletServers();
   if (!result.ok()) {
