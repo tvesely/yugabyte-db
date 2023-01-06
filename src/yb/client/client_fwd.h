@@ -30,6 +30,7 @@
 #include "yb/util/enums.h"
 #include "yb/util/math_util.h"
 #include "yb/util/strongly_typed_bool.h"
+#include "tablet_server.h"
 
 template <class T>
 class scoped_refptr;
@@ -106,6 +107,7 @@ struct YBqlWritePrimaryKeyComparator;
 using LocalTabletFilter = std::function<void(std::vector<const TabletId*>*)>;
 using VersionedTablePartitionListPtr = std::shared_ptr<const VersionedTablePartitionList>;
 using TablePartitionListPtr = std::shared_ptr<const TablePartitionList>;
+using NodeLockInfo = google::protobuf::RepeatedPtrField<yb::tserver::PgGetLockStatusResponsePB_NodeLockStatusResponsePB>;
 using TabletServersInfo = std::vector<YBTabletServerPlacementInfo>;
 using YBqlOpPtr = std::shared_ptr<YBqlOp>;
 using YBqlReadOpPtr = std::shared_ptr<YBqlReadOp>;

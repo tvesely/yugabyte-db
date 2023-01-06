@@ -44,8 +44,8 @@ service PgClientService {
   rpc GetCatalogMasterVersion(PgGetCatalogMasterVersionRequestPB)
       returns (PgGetCatalogMasterVersionResponsePB);
   rpc GetDatabaseInfo(PgGetDatabaseInfoRequestPB) returns (PgGetDatabaseInfoResponsePB);
-  rpc IsInitDbDone(PgIsInitDbDoneRequestPB) returns (PgIsInitDbDoneResponsePB);
   rpc GetLockStatus(PgGetLockStatusRequestPB) returns (PgGetLockStatusResponsePB);
+  rpc IsInitDbDone(PgIsInitDbDoneRequestPB) returns (PgIsInitDbDoneResponsePB);
   rpc ListLiveTabletServers(PgListLiveTabletServersRequestPB)
       returns (PgListLiveTabletServersResponsePB);
   rpc GetIndexBackfillProgress(PgGetIndexBackfillProgressRequestPB)
@@ -286,14 +286,6 @@ message PgGetDatabaseInfoResponsePB {
   master.GetNamespaceInfoResponsePB info = 2;
 }
 
-message PgIsInitDbDoneRequestPB {
-}
-
-message PgIsInitDbDoneResponsePB {
-  AppStatusPB status = 1;
-  bool done = 2;
-}
-
 message PgGetLockStatusRequestPB {
   // The table to scan. If unset, scan all tables
   bytes table_id = 1;
@@ -312,6 +304,14 @@ message PgGetLockStatusResponsePB {
   }
 
   repeated NodeLockStatusResponsePB node_locks = 2;
+}
+
+message PgIsInitDbDoneRequestPB {
+}
+
+message PgIsInitDbDoneResponsePB {
+  AppStatusPB status = 1;
+  bool done = 2;
 }
 
 message PgListLiveTabletServersRequestPB {
