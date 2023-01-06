@@ -30,6 +30,7 @@
 #include "yb/util/enums.h"
 #include "yb/util/math_util.h"
 #include "yb/util/strongly_typed_bool.h"
+#include "tablet_server.h"
 
 template <class T>
 class scoped_refptr;

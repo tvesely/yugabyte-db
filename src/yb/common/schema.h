@@ -217,6 +217,14 @@ class ColumnSchema {
     pg_type_oid_ = pg_type_oid;
   }
 
+  int32_t pg_typmod() const {
+    return pg_typmod_;
+  }
+
+  void set_pg_typmod(uint32_t pg_typmod) {
+    pg_typmod_ = pg_typmod;
+  }
+
   SortingType sorting_type() const {
     return sorting_type_;
   }
@@ -308,6 +316,7 @@ class ColumnSchema {
   int32_t order_;
   SortingType sorting_type_;
   int32_t pg_type_oid_;
+  int32_t pg_typmod_;
 };
 
 class ContiguousRow;
@@ -1203,6 +1212,7 @@ class SchemaBuilder {
   Status RemoveColumn(const std::string& name);
   Status RenameColumn(const std::string& old_name, const std::string& new_name);
   Status SetColumnPGType(const std::string& name, const uint32_t pg_type_oid);
+  Status SetColumnPGTypmod(const std::string& name, const uint32_t pg_typmod);
   Status AlterProperties(const TablePropertiesPB& pb);
 
  private:

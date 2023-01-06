@@ -803,6 +803,16 @@ Status SchemaBuilder::SetColumnPGType(const string& name, const uint32_t pg_type
   return STATUS(NotFound, "The specified column does not exist", name);
 }
 
+Status SchemaBuilder::SetColumnPGTypmod(const std::string& name, const uint32_t pg_typmod) {
+  for (ColumnSchema& col_schema : cols_) {
+    if (name == col_schema.name()) {
+      col_schema.set_pg_typmod(pg_typmod);
+      return Status::OK();
+    }
+  }
+  return STATUS(NotFound, "The specified column does not exist", name);
+}
+
 Status SchemaBuilder::AddColumn(const ColumnSchema& column, bool is_key) {
   if (ContainsKey(col_names_, column.name())) {
     return STATUS(AlreadyPresent, "The column already exists", column.name());

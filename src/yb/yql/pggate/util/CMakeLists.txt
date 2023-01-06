@@ -14,9 +14,10 @@
 set(YB_PCH_PATH ../)
 
 set(PGGATE_UTIL_SRCS
-    pg_wire.cc
     pg_doc_data.cc
-    pg_tuple.cc)
+    pg_function_helpers.cc
+    pg_tuple.cc
+    pg_wire.cc)
 
 set(PGGATE_UTIL_LIBS
     yb_util
