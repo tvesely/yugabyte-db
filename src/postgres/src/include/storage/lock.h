@@ -591,3 +591,5 @@ extern void VirtualXactLockTableCleanup(void);
 extern bool VirtualXactLock(VirtualTransactionId vxid, bool wait);
 
 #endif							/* LOCK_H */
+
+

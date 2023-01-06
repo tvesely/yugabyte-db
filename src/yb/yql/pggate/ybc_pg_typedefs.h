@@ -417,6 +417,36 @@ typedef struct YbTcmallocStats {
 // number of databases that can exist in a cluster.
 static const int32_t kYBCMaxNumDbCatalogVersions = 10000;
 
+// yb_lockfuncs.c
+typedef struct YBCLockInstanceData {
+  YBCPgOid database;
+  YBCPgOid relation;
+  int pid;            /* pid of this PGPROC */ // TODO: how to associate this?
+  uint64_t num_mode_cols;
+  const char **mode_cols;
+  bool granted;
+  bool single_shard; /* field to indicate whether this is a single shard transaction.  */
+  uint64_t *wait_start;
+  uint64_t *wait_end;
+  const char *node;
+  const char *tablet_id;
+  const char *transaction_id;
+  uint32_t subtransaction_id;
+  bool is_explicit;
+  uint64_t num_hash_cols;
+  const char **hash_cols;
+  uint64_t num_range_cols;
+  const char **range_cols;
+  uint32_t column_id;
+  bool is_full_pk;
+} YBCLockInstanceData;
+
+typedef struct YBCLockData
+{
+  int			nelements;		/* The length of the array */
+  YBCLockInstanceData  *locks;	/* Array of per-PROCLOCK information */
+} YBCLockData;
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif  // __cplusplus
