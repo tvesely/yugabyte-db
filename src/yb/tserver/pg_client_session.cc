@@ -519,12 +519,15 @@ HybridTime GetInTxnLimit(const PgPerformOptionsPB& options, ClockBase* clock) {
 } // namespace
 
 PgClientSession::PgClientSession(
-    uint64_t id, client::YBClient* client, const scoped_refptr<ClockBase>& clock,
+    uint64_t id, client::YBClient* client, int32_t backend_pid, int32_t backend_id,
+    const scoped_refptr<ClockBase>& clock,
     std::reference_wrapper<const TransactionPoolProvider> transaction_pool_provider,
     PgTableCache* table_cache, const std::optional<XClusterContext>& xcluster_context,
     PgMutationCounter* pg_node_level_mutation_counter, PgResponseCache* response_cache,
     PgSequenceCache* sequence_cache)
     : id_(id),
+      backend_pid_(backend_pid),
+      backend_id_(backend_id),
       client_(*client),
       clock_(clock),
       transaction_pool_provider_(transaction_pool_provider.get()),
@@ -1142,6 +1145,19 @@ PgClientSession::SetupSession(
 
   return std::make_pair(sessions_[to_underlying(kind)], used_read_time);
 }
+
+PgClientSessionMetadata PgClientSession::GetSessionMetadata() const {
+  // TODO: should I get the other transaction types, too?
+  auto session = sessions_[to_underlying(PgClientSessionKind::kPlain)].transaction;
+
+  return PgClientSessionMetadata{
+      .session_id = id_,
+      .backend_pid = backend_pid_,
+      .backend_id = backend_id_,
+      .transaction_metadata = session ? session->metadata() : TransactionMetadata(),
+  };
+}
+
 
 std::string PgClientSession::LogPrefix() {
   return SessionLogPrefix(id_);

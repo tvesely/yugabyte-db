@@ -116,8 +116,9 @@ struct PgApiContext {
 // Implements support for CAPI.
 class PgApiImpl {
  public:
-  PgApiImpl(PgApiContext context, const YBCPgTypeEntity *YBCDataTypeTable, int count,
-            YBCPgCallbacks pg_callbacks);
+  PgApiImpl(
+      PgApiContext context, const YBCPgTypeEntity *YBCDataTypeTable, int32_t backend_pid,
+      int32_t backend_id, int count, YBCPgCallbacks pg_callbacks);
   ~PgApiImpl();
 
   const YBCPgCallbacks* pg_callbacks() {

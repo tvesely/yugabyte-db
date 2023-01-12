@@ -152,8 +152,10 @@ inline std::optional<Bound> MakeBound(YBCPgBoundType type, uint64_t value) {
 // C API.
 //--------------------------------------------------------------------------------------------------
 
-void YBCInitPgGateEx(const YBCPgTypeEntity *data_type_table, int count, PgCallbacks pg_callbacks,
-                     PgApiContext* context) {
+void YBCInitPgGateEx(
+    const YBCPgTypeEntity *data_type_table, int count, int32_t backend_pid, int32_t backend_id,
+    PgCallbacks pg_callbacks, PgApiContext *context) {
+
   // TODO: We should get rid of hybrid clock usage in YSQL backend processes (see #16034).
   // However, this is added to allow simulating and testing of some known bugs until we remove
   // HybridClock usage.
@@ -171,17 +173,21 @@ void YBCInitPgGateEx(const YBCPgTypeEntity *data_type_table, int count, PgCallba
 
   pgapi_shutdown_done.exchange(false);
   if (context) {
-    pgapi = new pggate::PgApiImpl(std::move(*context), data_type_table, count, pg_callbacks);
+    pgapi = new pggate::PgApiImpl(
+        std::move(*context), data_type_table, count, backend_pid, backend_id, pg_callbacks);
   } else {
-    pgapi = new pggate::PgApiImpl(PgApiContext(), data_type_table, count, pg_callbacks);
+    pgapi = new pggate::PgApiImpl(
+        PgApiContext(), data_type_table, count, backend_pid, backend_id, pg_callbacks);
   }
   VLOG(1) << "PgGate open";
 }
 
 extern "C" {
 
-void YBCInitPgGate(const YBCPgTypeEntity *data_type_table, int count, PgCallbacks pg_callbacks) {
-  YBCInitPgGateEx(data_type_table, count, pg_callbacks, nullptr);
+void YBCInitPgGate(
+    const YBCPgTypeEntity *data_type_table, int count, int32_t backend_pid, int32_t backend_id,
+    PgCallbacks pg_callbacks) {
+  YBCInitPgGateEx(data_type_table, count, backend_pid, backend_id, pg_callbacks, nullptr);
 }
 
 void YBCDestroyPgGate() {

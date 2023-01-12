@@ -50,6 +50,7 @@ class PgMutationCounter;
     (GetDatabaseInfo) \
     (GetIndexBackfillProgress) \
     (GetLockStatus) \
+    (GetSessionInfo) \
     (GetTableDiskSize) \
     (GetTablePartitionList) \
     (Heartbeat) \

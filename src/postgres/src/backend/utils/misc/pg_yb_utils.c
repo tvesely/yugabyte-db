@@ -623,7 +623,7 @@ YBInitPostgresBackend(
 		callbacks.GetCurrentYbMemctx = &GetCurrentYbMemctx;
 		callbacks.GetDebugQueryString = &GetDebugQueryString;
 		callbacks.WriteExecOutParam = &YbWriteExecOutParam;
-		YBCInitPgGate(type_table, count, callbacks);
+		YBCInitPgGate(type_table, count, MyProcPid, MyBackendId, callbacks);
 		YBCInstallTxnDdlHook();
 
 		/*

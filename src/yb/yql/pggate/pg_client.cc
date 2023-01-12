@@ -140,9 +140,10 @@ class PgClient::Impl {
     CHECK(!proxy_);
   }
 
-  Status Start(rpc::ProxyCache* proxy_cache,
-               rpc::Scheduler* scheduler,
-               const tserver::TServerSharedObject& tserver_shared_object) {
+  Status Start(
+      rpc::ProxyCache* proxy_cache, rpc::Scheduler* scheduler,
+      const tserver::TServerSharedObject& tserver_shared_object, int32_t backend_pid,
+      int32_t backend_id) {
     CHECK_NOTNULL(&tserver_shared_object);
     MonoDelta resolve_cache_timeout;
     const auto& tserver_shared_data_ = *tserver_shared_object;
@@ -155,6 +156,8 @@ class PgClient::Impl {
     LOG(INFO) << "Using TServer host_port: " << host_port;
     proxy_ = std::make_unique<tserver::PgClientServiceProxy>(
         proxy_cache, host_port, nullptr /* protocol */, resolve_cache_timeout);
+    backend_pid_ = backend_pid;
+    backend_id_ = backend_id;
 
     auto future = create_session_promise_.get_future();
     Heartbeat(true);
@@ -178,9 +181,13 @@ class PgClient::Impl {
       }
     }
     tserver::PgHeartbeatRequestPB req;
+
+    req.set_backend_pid(backend_pid_);
+    req.set_backend_id(backend_id_);
     if (!create) {
       req.set_session_id(session_id_);
     }
+
     proxy_->HeartbeatAsync(
         req, &heartbeat_resp_, PrepareHeartbeatController(),
         [this, create] {
@@ -722,6 +729,8 @@ class PgClient::Impl {
   std::unique_ptr<tserver::PgClientServiceProxy> proxy_;
   rpc::RpcController controller_;
   uint64_t session_id_ = 0;
+  int32_t backend_pid_ = 0;
+  int32_t backend_id_ = 0;
 
   rpc::Poller heartbeat_poller_;
   std::atomic<bool> heartbeat_running_{false};
@@ -741,8 +750,9 @@ PgClient::~PgClient() {
 
 Status PgClient::Start(
     rpc::ProxyCache* proxy_cache, rpc::Scheduler* scheduler,
-    const tserver::TServerSharedObject& tserver_shared_object) {
-  return impl_->Start(proxy_cache, scheduler, tserver_shared_object);
+    const tserver::TServerSharedObject& tserver_shared_object, int32_t backend_pid,
+    int32_t backend_id) {
+  return impl_->Start(proxy_cache, scheduler, tserver_shared_object, backend_pid, backend_id);
 }
 
 void PgClient::Shutdown() {

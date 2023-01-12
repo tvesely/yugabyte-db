@@ -222,10 +222,13 @@ class PgClientServiceImpl::Impl {
       return ResultToStatus(DoGetSession(req.session_id()));
     }
 
+
     auto session_id = ++session_serial_no_;
+    int32_t backend_pid = req.backend_pid();
+    int32_t backend_id = req.backend_id();
     auto session = std::make_shared<LockablePgClientSession>(
-        FLAGS_pg_client_session_expiration_ms * 1ms, session_id, &client(), clock_,
-        transaction_pool_provider_, &table_cache_, xcluster_context_,
+        FLAGS_pg_client_session_expiration_ms * 1ms, session_id, &client(), backend_pid, backend_id,
+        clock_, transaction_pool_provider_, &table_cache_, xcluster_context_,
         pg_node_level_mutation_counter_, &response_cache_, &sequence_cache_);
     resp->set_session_id(session_id);
     if (FLAGS_pg_client_use_shared_memory) {
@@ -317,6 +320,19 @@ class PgClientServiceImpl::Impl {
     uint64_t version;
     RETURN_NOT_OK(client().GetYsqlCatalogMasterVersion(&version));
     resp->set_version(version);
+    return Status::OK();
+  }
+
+  Status GetSessionInfo(
+      const PgGetSessionInfoRequestPB req, PgGetSessionInfoResponsePB *resp,
+      rpc::RpcContext* context) {
+    std::lock_guard<rw_spinlock> lock(mutex_);
+
+    for(auto const& s : sessions_) {
+      PgGetSessionInfoResponsePB_PgClientSessionMetadataPB* session = resp->add_sessions();
+      s->GetSessionMetadata().ToPB(session);
+    }
+
     return Status::OK();
   }
 

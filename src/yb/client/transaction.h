@@ -185,8 +185,9 @@ class YBTransaction : public std::enable_shared_from_this<YBTransaction> {
   // sub-transactions).
   std::unordered_map<TableId, uint64_t> GetTableMutationCounts() const;
 
-  boost::optional<SubTransactionMetadataPB> GetSubTransactionMetadataPB() const;
+  TransactionMetadata GetTransactionMetadata() const;
 
+  boost::optional<SubTransactionMetadataPB> GetSubTransactionMetadataPB() const;
  private:
   class Impl;
   std::unique_ptr<Impl> impl_;

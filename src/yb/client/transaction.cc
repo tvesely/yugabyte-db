@@ -1038,6 +1038,10 @@ class YBTransaction::Impl final : public internal::TxnBatcherIf {
     VLOG_WITH_PREFIX(2) << "Log prefix tag changed";
   }
 
+  TransactionMetadata GetTransactionMetadata() const {
+    return metadata_;
+  }
+
   boost::optional<SubTransactionMetadataPB> GetSubTransactionMetadataPB() const {
     if (subtransaction_.IsDefaultState()) {
       return boost::none;
@@ -2349,6 +2353,10 @@ std::unordered_map<TableId, uint64_t> YBTransaction::GetTableMutationCounts() co
 
 void YBTransaction::SetLogPrefixTag(const LogPrefixName& name, uint64_t value) {
   return impl_->SetLogPrefixTag(name, value);
+}
+
+TransactionMetadata YBTransaction::GetTransactionMetadata() const {
+  return impl_->GetTransactionMetadata();
 }
 
 boost::optional<SubTransactionMetadataPB> YBTransaction::GetSubTransactionMetadataPB() const {
