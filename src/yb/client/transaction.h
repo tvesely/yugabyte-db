@@ -177,6 +177,8 @@ class YBTransaction : public std::enable_shared_from_this<YBTransaction> {
 
   void SetLogPrefixTag(const LogPrefixName& name, uint64_t value);
 
+  TransactionMetadata metadata() const;
+
  private:
   class Impl;
   std::unique_ptr<Impl> impl_;

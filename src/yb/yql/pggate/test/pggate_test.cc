@@ -138,6 +138,8 @@ Status PggateTest::Init(const char *test_name, int num_tablet_servers) {
 
   const YBCPgTypeEntity *type_table = nullptr;
   int count = 0;
+  int32_t backend_pid = 0; // TODO: should this pid be tested here?
+  int32_t backend_id = 0; // TODO: should this pid be tested here?
   YBCTestGetTypeTable(&type_table, &count);
   YBCPgCallbacks callbacks;
   callbacks.GetCurrentYbMemctx = &GetCurrentTestYbMemctx;
@@ -155,7 +157,7 @@ Status PggateTest::Init(const char *test_name, int num_tablet_servers) {
   }
   FLAGS_pggate_tserver_shm_fd = tserver_shared_object_.GetFd();
 
-  YBCInitPgGate(type_table, count, callbacks);
+  YBCInitPgGate(type_table, count, backend_pid, backend_id, callbacks);
 
   // Setup session.
   CHECK_YBC_STATUS(YBCPgInitSession(nullptr /* database_name */));

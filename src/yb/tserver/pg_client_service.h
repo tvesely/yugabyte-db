@@ -48,6 +48,7 @@ namespace tserver {
     (GetDatabaseInfo) \
     (GetIndexBackfillProgress) \
     (GetLockStatus) \
+    (GetSessionInfo) \
     (GetTableDiskSize) \
     (GetTablePartitionList) \
     (Heartbeat) \

@@ -74,9 +74,10 @@ class PgClient {
   PgClient();
   ~PgClient();
 
-  Status Start(rpc::ProxyCache* proxy_cache,
-               rpc::Scheduler* scheduler,
-               const tserver::TServerSharedObject& tserver_shared_object);
+  Status Start(
+      rpc::ProxyCache* proxy_cache, rpc::Scheduler* scheduler,
+      const tserver::TServerSharedObject& tserver_shared_object, int32_t backend_pid,
+      int32_t backend_id);
   void Shutdown();
 
   void SetTimeout(MonoDelta timeout);

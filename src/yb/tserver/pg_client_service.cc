@@ -208,9 +208,12 @@ class PgClientServiceImpl::Impl {
       return ResultToStatus(DoGetSession(req.session_id()));
     }
 
+
     auto session_id = ++session_serial_no_;
+    int32_t backend_pid = req.backend_pid();
+    int32_t backend_id = req.backend_id();
     auto session = std::make_shared<LockablePgClientSession>(
-        session_id, &client(), clock_, transaction_pool_provider_, &table_cache_,
+        session_id, backend_pid, backend_id, &client(), clock_, transaction_pool_provider_, &table_cache_,
         xcluster_safe_time_map_, &response_cache_);
     resp->set_session_id(session_id);
 
@@ -299,6 +302,19 @@ class PgClientServiceImpl::Impl {
     uint64_t version;
     RETURN_NOT_OK(client().GetYsqlCatalogMasterVersion(&version));
     resp->set_version(version);
+    return Status::OK();
+  }
+
+  Status GetSessionInfo(
+      const PgGetSessionInfoRequestPB req, PgGetSessionInfoResponsePB *resp,
+      rpc::RpcContext* context) {
+    std::lock_guard<rw_spinlock> lock(mutex_);
+
+    for(auto const& s : sessions_) {
+      PgGetSessionInfoResponsePB_PgClientSessionMetadataPB* session = resp->add_sessions();
+      s.value()->metadata().ToPB(session);
+    }
+
     return Status::OK();
   }
 
