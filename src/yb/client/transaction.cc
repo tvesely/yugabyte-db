@@ -1009,6 +1009,10 @@ class YBTransaction::Impl final : public internal::TxnBatcherIf {
     VLOG_WITH_PREFIX(2) << "Log prefix tag changed";
   }
 
+  TransactionMetadata metadata() const {
+    return metadata_;
+  }
+
  private:
   void CompleteConstruction() {
     LOG_IF(FATAL, !IsAcceptableAtomicImpl(log_prefix_.tag));
@@ -1966,6 +1970,7 @@ class YBTransaction::Impl final : public internal::TxnBatcherIf {
     return Status::OK();
   }
 
+
   // The trace buffer.
   scoped_refptr<Trace> trace_;
 
@@ -2208,6 +2213,10 @@ bool YBTransaction::HasSubTransaction(SubTransactionId id) {
 
 void YBTransaction::SetLogPrefixTag(const LogPrefixName& name, uint64_t value) {
   return impl_->SetLogPrefixTag(name, value);
+}
+
+TransactionMetadata YBTransaction::metadata() const {
+  return impl_->metadata();
 }
 
 } // namespace client

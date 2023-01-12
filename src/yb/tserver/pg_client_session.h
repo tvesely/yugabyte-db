@@ -28,6 +28,7 @@
 #include <boost/range/iterator_range.hpp>
 
 #include "yb/client/client_fwd.h"
+#include "yb/client/transaction.h"
 
 #include "yb/common/entity_ids.h"
 #include "yb/common/read_hybrid_time.h"
@@ -75,6 +76,24 @@ using PgClientSessionOperations = std::vector<std::shared_ptr<client::YBPgsqlOp>
 
 YB_DEFINE_ENUM(PgClientSessionKind, (kPlain)(kDdl)(kCatalog)(kSequence));
 
+struct PgClientSessionMetadata {
+  uint64_t session_id;
+  int32_t backend_pid;
+  int32_t backend_id;
+
+  TransactionMetadata transaction_metadata;
+
+  template <class PB>
+  void ToPB(PB* pb) const {
+    pb->set_session_id(session_id);
+    pb->set_backend_pid(backend_pid);
+    pb->set_backend_id(backend_id);
+    auto t = pb->mutable_transaction();
+
+    transaction_metadata.ToPB(t);
+  }
+};
+
 class PgClientSession : public std::enable_shared_from_this<PgClientSession> {
  public:
   struct UsedReadTime {
@@ -90,7 +109,7 @@ class PgClientSession : public std::enable_shared_from_this<PgClientSession> {
   using UsedReadTimePtr = std::weak_ptr<UsedReadTime>;
 
   PgClientSession(
-      uint64_t id,
+      uint64_t id, int32_t backend_pid, int32_t backend_id,
       client::YBClient* client, const scoped_refptr<ClockBase>& clock,
       std::reference_wrapper<const TransactionPoolProvider> transaction_pool_provider,
       PgTableCache* table_cache, const XClusterSafeTimeMap* xcluster_safe_time_map,
@@ -107,6 +126,8 @@ class PgClientSession : public std::enable_shared_from_this<PgClientSession> {
       rpc::RpcContext* context);
 
   BOOST_PP_SEQ_FOR_EACH(PG_CLIENT_SESSION_METHOD_DECLARE, ~, PG_CLIENT_SESSION_METHODS);
+
+  PgClientSessionMetadata metadata() const;
 
  private:
   std::string LogPrefix();
@@ -160,6 +181,8 @@ class PgClientSession : public std::enable_shared_from_this<PgClientSession> {
   }
 
   const uint64_t id_;
+  const int32_t backend_pid_;
+  const int32_t backend_id_;
   client::YBClient& client_;
   scoped_refptr<ClockBase> clock_;
   const TransactionPoolProvider& transaction_pool_provider_;

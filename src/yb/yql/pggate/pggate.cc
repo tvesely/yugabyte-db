@@ -480,8 +480,8 @@ Result<docdb::KeyBytes> PgApiImpl::TupleIdBuilder::Build(
 //--------------------------------------------------------------------------------------------------
 
 PgApiImpl::PgApiImpl(
-    PgApiContext context, const YBCPgTypeEntity *YBCDataTypeArray, int count,
-    YBCPgCallbacks callbacks)
+    PgApiContext context, const YBCPgTypeEntity *YBCDataTypeArray, int count, int32_t backend_pid,
+    int32_t backend_id, YBCPgCallbacks callbacks)
     : metric_registry_(std::move(context.metric_registry)),
       metric_entity_(std::move(context.metric_entity)),
       mem_tracker_(std::move(context.mem_tracker)),
@@ -502,7 +502,8 @@ PgApiImpl::PgApiImpl(
   }
 
   CHECK_OK(pg_client_.Start(
-      proxy_cache_.get(), &messenger_holder_.messenger->scheduler(), tserver_shared_object_));
+      proxy_cache_.get(), &messenger_holder_.messenger->scheduler(), tserver_shared_object_,
+      backend_pid, backend_id));
 }
 
 PgApiImpl::~PgApiImpl() {
