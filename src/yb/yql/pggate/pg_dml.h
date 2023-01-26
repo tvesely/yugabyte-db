@@ -52,7 +52,7 @@ class PgDml : public PgStatement {
   Status AppendColumnRef(PgExpr *colref, bool is_primary);
 
   // TODO: add documentation here
-  Status AppendColumnLockRef(int attr_num, RowMarkType lock_type);
+  Status AppendColumnLockRef(int attr_num);
 
   // Prepare column for both ends.
   // - Prepare protobuf to communicate with DocDB.
@@ -160,6 +160,11 @@ class PgDml : public PgStatement {
 
   // Allocate a PgsqlColRefPB entry in the protobuf request
   virtual LWPgsqlColRefPB *AllocColRefPB() = 0;
+
+  // Column references that aren't part of the RETURNING or write request that need to be locked
+  // for consistency. Currently, the only use for this is only used in UPDATE to lock columns that
+  // are referenced in a CHECK constraint, but are not part of the RETURNING clause.
+  void ColRefsForLockToPB(LWPgsqlColRefForLockPB *col_refs_to_lock, RowMarkType row_mark);
 
   template<class Request>
   static void DoSetCatalogCacheVersion(

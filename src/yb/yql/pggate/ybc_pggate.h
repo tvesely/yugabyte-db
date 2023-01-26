@@ -365,7 +365,7 @@ YBCStatus YbPgDmlAppendQual(YBCPgStatement handle, YBCPgExpr qual, bool is_prima
 YBCStatus YbPgDmlAppendColumnRef(YBCPgStatement handle, YBCPgExpr colref, bool is_primary);
 
 // Add a column reference indicate that this column is referred to indirectly. // TODO: this needs to be a better explanation
-YBCStatus YbPgDmlAppendColumnLockRef(YBCPgStatement handle, int attr_num, int lock_type);
+YBCStatus YbPgDmlAppendColumnLockRef(YBCPgStatement handle, int attr_num);
 
 // Binding Columns: Bind column with a value (expression) in a statement.
 // + This API is used to identify the rows you want to operate on. If binding columns are not

@@ -435,6 +435,7 @@ void WriteQuery::Execute(std::unique_ptr<WriteQuery> query) {
   }
 }
 
+// TODO: should I be setting read pairs for UPDATE with constraint references? If so, I need to pay attention to this.
 // The conflict management policy (as defined in conflict_resolution.h) to be used is determined
 // based on the following -
 //   1. For explicit row level locking, YSQL sets the "wait_policy" field which maps to a

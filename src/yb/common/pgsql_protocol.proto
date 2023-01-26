@@ -119,7 +119,12 @@ message PgsqlColRefPB {
   optional int32 typid = 3;
   optional int32 typmod = 4;
   optional int32 collid = 5;
-  optional RowMarkType row_mark_type = 6;
+}
+
+// TODO: document this
+message PgsqlColRefForLockPB {
+  optional RowMarkType row_mark_type = 1;
+  repeated int32 column_id = 2;
 }
 
 // ColumnValue is a value to be assigned to a table column by DocDB while executing a PGSQL request.
@@ -278,6 +283,9 @@ message PgsqlWriteRequestPB {
   // to convert between DocDB and Postgres formats.
   // One entry per column referenced.
   repeated PgsqlColRefPB col_refs = 21;
+
+  // TODO: document this
+  optional PgsqlColRefForLockPB col_refs_for_lock = 26;
 
   // Used only in pg client.
   optional bytes partition_key = 22;

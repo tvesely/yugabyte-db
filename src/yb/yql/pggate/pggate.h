@@ -393,7 +393,7 @@ class PgApiImpl {
 
   Status DmlAppendColumnRef(PgStatement *handle, PgExpr *colref, bool is_primary);
 
-  Status DmlAppendColumnLockRef(PgStatement *handle, int attr_num, int lock_type);
+  Status DmlAppendColumnLockRef(PgStatement *handle, int attr_num);
 
   // Binding Columns: Bind column with a value (expression) in a statement.
   // + This API is used to identify the rows you want to operate on. If binding columns are not

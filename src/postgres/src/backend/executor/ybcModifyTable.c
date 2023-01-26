@@ -912,12 +912,18 @@ bool YBCExecuteUpdate(Relation rel,
 
 		AttrNumber attnum  = att_desc->attnum;
 
-		if (bms_is_member(attnum - minattr, checkConstraintRefs)) {
-			/* This column is referenced by a check constraint, but is not directly referenced
-			 * in the statement, so we need to explicitly mark it to be locked. */
-			HandleYBStatus(YbPgDmlAppendColumnLockRef(update_stmt, attnum, ROW_MARK_KEYSHARE));
-			// TODO: the primary key should always be locked, so should I assert that it is not selected here?
+		if (bms_is_member(attnum - minattr, checkConstraintRefs))
+		{
+			Assert(IsRealYBColumn(rel, attnum));
+			/* This column is referenced by a check constraint, but is not
+			 * directly referenced in the statement, so we need to explicitly
+			 * mark it to be locked. */
+			HandleYBStatus(
+				YbPgDmlAppendColumnLockRef(update_stmt, attnum));
+			// TODO: the primary key should always be locked, so should I assert
+			// that it is not selected here?
 		}
+		// TODO: set the lock mode here, instead of at PgDmlWrite::Exec
 	}
 	/* Execute the statement. */
 

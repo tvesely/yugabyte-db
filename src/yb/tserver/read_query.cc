@@ -379,6 +379,19 @@ Status ReadQuery::DoPerform() {
     }
     // TODO(dtxn) write request id
 
+
+    /*
+     * This is where read intents are created for serializable isolation in a read request
+     *  TODO: Should I be calling this to create the read intents for check constraints, or
+     *        do I need a new function?
+     *
+     *  1. Adjust the pg_dml.cc to write to the new
+     *  2. Figure out if I need to cook the check constraint during planning in order to identify the
+     *     column refs, or if I should piggy back off of the existing constraint cooking interface.
+     *  3. Write a function to recurse into the cooked constraint to find column references
+     *  4. Pass the column references to YBC pggate Update
+     *  5. Add the references to a write_batch.read_pairs() during write PREPARE
+     */
     RETURN_NOT_OK(leader_peer.tablet->CreateReadIntents(
         req_->transaction(), req_->subtransaction(), req_->ql_batch(), req_->pgsql_batch(),
         &write_batch));
@@ -393,7 +406,7 @@ Status ReadQuery::DoPerform() {
         peer->Enqueue(self.get());
       }
     });
-    leader_peer.peer->WriteAsync(std::move(query)); // The intent is written in here
+    leader_peer.peer->WriteAsync(std::move(query)); // The intents for read queries are written here
     return Status::OK();
   }
 

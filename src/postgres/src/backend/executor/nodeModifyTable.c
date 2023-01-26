@@ -1460,7 +1460,7 @@ ExecUpdate(ModifyTableState *mtstate,
 		bool row_found = false;
 
 		Bitmapset *actualUpdatedCols = rte->updatedCols;
-		Bitmapset *referencedCols = NULL;
+		Bitmapset *checkConstraintRefs = NULL;
 		Bitmapset *extraUpdatedCols = NULL;
 		if (beforeRowUpdateTriggerFired)
 		{
@@ -1488,10 +1488,10 @@ ExecUpdate(ModifyTableState *mtstate,
 
 				int bms_idx = attnum - firstLowInvalidAttributeNumber;
 
-				referencedCols = bms_add_member(referencedCols, bms_idx);
+				checkConstraintRefs = bms_add_member(checkConstraintRefs, bms_idx);
 			}
 
-			referencedCols = bms_del_members(referencedCols, actualUpdatedCols);
+			checkConstraintRefs = bms_del_members(checkConstraintRefs, actualUpdatedCols);
 		}
 		bool is_pk_updated =
 			bms_overlap(YBGetTablePrimaryKeyBms(resultRelationDesc), actualUpdatedCols);
@@ -1519,7 +1519,7 @@ ExecUpdate(ModifyTableState *mtstate,
 										 mtstate->yb_fetch_target_tuple,
 										 estate->yb_es_is_single_row_modify_txn,
 										 actualUpdatedCols,
-										 referencedCols,
+										 checkConstraintRefs,
 										 canSetTag);
 		}
 

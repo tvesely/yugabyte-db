@@ -119,6 +119,9 @@ Status PgDmlWrite::Exec(ForceNonBufferable force_non_bufferable) {
   // Compatibility: set column ids as expected by legacy nodes
   ColumnRefsToPB(write_req_->mutable_column_refs());
 
+  // TODO: This is a hack to add the ROW_MARK_KEYSHARE to the rows to lock. This needs to be set by the statement itself (probably)
+  ColRefsForLockToPB(write_req_->mutable_col_refs_for_lock(), RowMarkType::ROW_MARK_KEYSHARE);
+
   // Execute the statement. If the request has been sent, get the result and handle any rows
   // returned.
   if (VERIFY_RESULT(doc_op_->Execute(force_non_bufferable)) == RequestSent::kTrue) {

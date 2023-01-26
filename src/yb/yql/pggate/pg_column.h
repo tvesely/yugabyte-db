@@ -85,15 +85,11 @@ class PgColumn {
     write_requested_ = value;
   }
 
-  RowMarkType lock_type() const {
+  bool lock_requested() const {
     return lock_requested_;
   }
 
-  bool lock_requested() const {
-    return IsValidRowMarkType(lock_requested_);
-  }
-
-  void set_lock_requested(const RowMarkType value) {
+  void set_lock_requested(const bool value) {
     lock_requested_ = value;
   }
 
@@ -148,7 +144,7 @@ class PgColumn {
   bool write_requested_ = false;
 
   // Whether this column should be individually locked
-  RowMarkType lock_requested_ = RowMarkType::ROW_MARK_ABSENT;
+  bool lock_requested_ = false;
 
   int pg_typid_ = 0;
 

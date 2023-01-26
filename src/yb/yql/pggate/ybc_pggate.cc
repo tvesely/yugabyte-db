@@ -819,8 +819,8 @@ YBCStatus YbPgDmlAppendColumnRef(YBCPgStatement handle, YBCPgExpr colref, bool i
   return ToYBCStatus(pgapi->DmlAppendColumnRef(handle, colref, is_primary));
 }
 
-YBCStatus YbPgDmlAppendColumnLockRef(YBCPgStatement handle, int attr_num, int lock_type) {
-  return ToYBCStatus(pgapi->DmlAppendColumnLockRef(handle, attr_num, lock_type));
+YBCStatus YbPgDmlAppendColumnLockRef(YBCPgStatement handle, int attr_num) {
+  return ToYBCStatus(pgapi->DmlAppendColumnLockRef(handle, attr_num));
 }
 
 YBCStatus YBCPgDmlBindColumn(YBCPgStatement handle, int attr_num, YBCPgExpr attr_value) {

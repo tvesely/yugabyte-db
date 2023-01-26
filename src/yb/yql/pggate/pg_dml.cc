@@ -146,18 +146,18 @@ Status PgDml::AppendColumnRef(PgExpr *colref, bool is_primary) {
   return Status::OK();
 }
 
-Status PgDml::AppendColumnLockRef(int attr_num, RowMarkType lock_type) {
+Status PgDml::AppendColumnLockRef(int attr_num) {
   PgColumn& col = VERIFY_RESULT(target_.ColumnForAttr(attr_num));
-  if (!IsValidRowMarkType(lock_type))
-    return STATUS_FORMAT(InvalidArgument, "Invalid RowMarkType $0", lock_type);
-
   // TODO: what to do about virtual columns? Can virtual columns even be locked? For now, just throw an error
   if(col.is_virtual_column())
     return STATUS_FORMAT(InvalidArgument, "virtual columns cannot be locked");
 
+  // TODO: uncomment this if the error above is not removed
+  //if (!col.is_virtual_column()){
+  col.set_read_requested(true);  // TODO: do I need to set read requested for this column?
   // If the row mark is already set, pick the strongest type
-  col.set_lock_requested(GetStrongestRowMarkType({col.lock_type(), lock_type}));
-  col.set_read_requested(true);
+  col.set_lock_requested(true); // can we set this for columns that are a virtual column?
+  //}
 
   return Status::OK();
 }
@@ -235,9 +235,19 @@ void PgDml::ColRefsToPB() {
         col_ref->set_typmod(col.pg_typmod());
         col_ref->set_collid(col.pg_collid());
       }
-      if(col.lock_requested()) {
-        col_ref->set_row_mark_type(col.lock_type());
-      }
+    }
+  }
+}
+
+// TODO: Unless this field gets added to PgsqlWriteRequest, this should probably be moved to PgDmlWrite?
+void PgDml::ColRefsForLockToPB(LWPgsqlColRefForLockPB *col_refs, RowMarkType lock_mode) {
+  col_refs->Clear();
+
+  col_refs->set_row_mark_type(lock_mode);
+
+  for (const PgColumn& col : target_.columns()) {
+    if (col.lock_requested()) {
+      col_refs->add_column_id(col.id());
     }
   }
 }
