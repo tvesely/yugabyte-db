@@ -77,10 +77,11 @@
 #include "catalog/pg_depend.h"
 #include "catalog/pg_shdepend.h"
 #include "catalog/yb_catalog_version.h"
+#include "executor/ybcExpr.h"
 #include "executor/ybcModifyTable.h"
+#include "optimizer/ybcplan.h"
 #include "parser/parsetree.h"
 #include "pg_yb_utils.h"
-#include "optimizer/ybcplan.h"
 #include "utils/syscache.h"
 
 static bool ExecOnConflictUpdate(ModifyTableState *mtstate,
@@ -1474,25 +1475,69 @@ ExecUpdate(ModifyTableState *mtstate,
 			}
 		}
 
-		if (resultRelationDesc->rd_att->constr->num_check > 0)
+		TupleConstr *constr = resultRelationDesc->rd_att->constr;
+
+		// TODO: these references really should be gathered during planning, not
+		//       here.
+		if (constr && constr->num_check > 0)
 		{
-			AttrNumber firstLowInvalidAttributeNumber = YBGetFirstLowInvalidAttributeNumber(resultRelationDesc);
-			for (int idx = 0; idx < resultRelationDesc->rd_att->natts; idx++)
+			int			 ncheck = constr->num_check;
+			ConstrCheck *check = constr->check;
+			// TODO: this really should be a bms
+			List		*colrefs = NIL;
+			bool		 needs_all_columns = false;
+			for (int i = 0; i < ncheck; i++)
 			{
-				FormData_pg_attribute *att_desc = TupleDescAttr(resultRelationDesc->rd_att, idx);
+				Expr *checkconstr;
+				bool  all_references_valid = false;
 
-				AttrNumber attnum  = att_desc->attnum;
+				// TODO: is the overhead of doing this too costly?
+				checkconstr = stringToNode(check[i].ccbin);
 
-				if (!IsRealYBColumn(resultRelationDesc, attnum))
-					continue;
+				// TODO: This is specifically designed to check if we can
+				//       push down an expression... It will successfully
+				//       round up column references for now, but this really
+				//       should use a more specific function to evaluate this.
+				all_references_valid = YbCanPushdownExpr(checkconstr, &colrefs);
 
-				int bms_idx = attnum - firstLowInvalidAttributeNumber;
-
-				checkConstraintRefs = bms_add_member(checkConstraintRefs, bms_idx);
+				if (!all_references_valid)
+				{
+					needs_all_columns = true;
+					break;
+				}
 			}
 
+			AttrNumber firstLowInvalidAttributeNumber = YBGetFirstLowInvalidAttributeNumber(resultRelationDesc);
+
+			if (needs_all_columns) {
+				for (int idx = 0; idx < resultRelationDesc->rd_att->natts; idx++)
+				{
+					FormData_pg_attribute *att_desc = TupleDescAttr(resultRelationDesc->rd_att, idx);
+
+					AttrNumber attnum  = att_desc->attnum;
+
+					if (!IsRealYBColumn(resultRelationDesc, attnum))
+						continue;
+
+					int bms_idx = attnum - firstLowInvalidAttributeNumber;
+
+					checkConstraintRefs = bms_add_member(checkConstraintRefs, bms_idx);
+				}
+			} else {
+				ListCell   *l;
+				foreach(l, colrefs)
+				{
+					YbExprParamDesc *col = (YbExprParamDesc *) lfirst(l);
+					checkConstraintRefs = bms_add_member(checkConstraintRefs, col->attno - firstLowInvalidAttributeNumber);
+				}
+			}
+
+			// Remove the updated columns from the bms
 			checkConstraintRefs = bms_del_members(checkConstraintRefs, actualUpdatedCols);
+			// Remove the primary key columns from the bms
+			checkConstraintRefs = bms_del_members(checkConstraintRefs, YBGetTablePrimaryKeyBms(resultRelationDesc));
 		}
+
 		bool is_pk_updated =
 			bms_overlap(YBGetTablePrimaryKeyBms(resultRelationDesc), actualUpdatedCols);
 
