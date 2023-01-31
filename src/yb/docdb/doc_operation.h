@@ -67,6 +67,9 @@ class DocOperation {
   virtual Status GetDocPaths(
       GetDocPathsMode mode, DocPathsToLock *paths, IsolationLevel *level) const = 0;
 
+  // TODO: This function is currently only relevant for PgsqlWriteOperation. Should it exist here at all?
+  virtual Status GetReadLockPaths(DocPathsToLock *paths) const { return Status::OK(); };
+
   virtual Status Apply(const DocOperationApplyData& data) = 0;
   virtual Type OpType() = 0;
   virtual void ClearResponse() = 0;

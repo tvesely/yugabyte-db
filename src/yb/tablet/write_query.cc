@@ -533,9 +533,11 @@ Status WriteQuery::DoExecute() {
         });
   }
 
+  // It perplexes me why this is here. This only creates these read pairs when there is a transactional
+  // query, but wouldn't it make more sense to add this inside PrepareDocWriteOperation instead?
+  boost::container::small_vector<RefCntPrefix, 16> paths;
   if (isolation_level_ == IsolationLevel::SERIALIZABLE_ISOLATION &&
       prepare_result_.need_read_snapshot) {
-    boost::container::small_vector<RefCntPrefix, 16> paths;
     for (const auto& doc_op : doc_ops_) {
       paths.clear();
       IsolationLevel ignored_isolation_level;
@@ -551,6 +553,19 @@ Status WriteQuery::DoExecute() {
       }
     }
   }
+
+//  // Should I add locks here like for serializable above?
+//  for (const auto& doc_op : doc_ops_) {
+//    write_batch.set_row_mark_type(RowMarkType::ROW_MARK_KEYSHARE);
+//    paths.clear();
+//    RETURN_NOT_OK(doc_op->GetReadLockPaths(&paths));
+//    for (const auto& path : paths) {
+//      auto key = path.as_slice();
+//      auto& pair = write_batch.mutable_read_pairs()->emplace_back();
+//      pair.dup_key(key);
+//      pair.dup_value(std::string(1, docdb::KeyEntryTypeAsChar::kNullLow));
+//    }
+//  }
 
   auto conflict_management_policy = GetConflictManagementPolicy(
       tablet->wait_queue(), write_batch);

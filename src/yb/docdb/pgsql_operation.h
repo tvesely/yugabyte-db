@@ -101,6 +101,8 @@ class PgsqlWriteOperation :
                      DocPathsToLock *paths,
                      IsolationLevel *level) const override;
 
+  Status GetReadLockPaths(DocPathsToLock *paths) const override;
+
   class RowPackContext;
 
   Status InsertColumn(

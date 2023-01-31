@@ -196,6 +196,16 @@ Result<DetermineKeysToLockResult> DetermineKeysToLock(
         }, partial_range_key_intents));
   }
 
+  // This isn't right, because in UPDATE we just grab the liveness column Also, we don't actually
+  // set the intent here, so it needs to be in conflict_resolution?
+  for (const unique_ptr<DocOperation>& doc_op : doc_write_ops) {
+      doc_paths.clear();
+      RETURN_NOT_OK(doc_op->GetReadLockPaths(&doc_paths));
+      for (const auto& doc_path : doc_paths) {
+            RETURN_NOT_OK(ApplyIntent(doc_path, IntentTypeSet({IntentType::kWeakRead}), &result.lock_batch));
+      }
+  }
+
   return result;
 }
 

@@ -1022,6 +1022,10 @@ Status PgsqlWriteOperation::GetDocPaths(GetDocPathsMode mode,
 
   switch (mode) {
     case GetDocPathsMode::kLock: {
+      // We previously determined that it is too expensive to figure out what exact columns are
+      // read by the query in the case of an expression. My thought was to set a GUC that evaluates
+      // to see if a column is read by a constraint, but it may be sufficient to just do the same
+      // as we do for queries with an expression.
       if (request_.stmt_type() == PgsqlWriteRequestPB::PGSQL_UPDATE) {
         // In case of UPDATE row need to be protected from removing. Weak intent is enough for
         // this purpose. To achieve this the path for row's SystemColumnIds::kLivenessColumn column
@@ -1054,7 +1058,7 @@ Status PgsqlWriteOperation::GetDocPaths(GetDocPathsMode mode,
     }
     case GetDocPathsMode::kIntents: {
       const google::protobuf::RepeatedPtrField<PgsqlColumnValuePB>* column_values = nullptr;
-      if (request_.stmt_type() == PgsqlWriteRequestPB::PGSQL_INSERT ||
+      if (request_.stmt_type() == PgsqlWriteRequestPB::PGSQL_INSERT || // TODO: If there is a check constraint on a column that isn't inserted, does it need to be locked?
           request_.stmt_type() == PgsqlWriteRequestPB::PGSQL_UPSERT) {
         column_values = &request_.column_values();
       } else if (request_.stmt_type() == PgsqlWriteRequestPB::PGSQL_UPDATE) {
@@ -1076,6 +1080,13 @@ Status PgsqlWriteOperation::GetDocPaths(GetDocPathsMode mode,
   return Status::OK();
 }
 
+Status PgsqlWriteOperation::GetReadLockPaths(DocPathsToLock *paths) const {
+  for(const auto& column : request_.col_refs_for_lock().column_id()) {
+    DocKeyColumnPathBuilder builder(encoded_doc_key_);
+    paths->push_back(builder.Build(column));
+  }
+  return Status::OK();
+}
 //--------------------------------------------------------------------------------------------------
 
 Result<size_t> PgsqlReadOperation::Execute(const YQLStorageIf& ql_storage,

@@ -218,7 +218,7 @@ YbInstantiateRemoteParams(PushdownExprs *remote, EState *estate)
  *	     are permitted to access the catalog;
  *	   - DocDB must support conversion of parameter and result values between
  *	     DocDB and Postgres formats, so there should be conversion functions;
- *	   - Typically functions with polymorfic parameters or result need catalog
+ *	   - Typically functions with polymorphic parameters or result need catalog
  *	     access to determine runtime data types, so they are not pushed down.
  */
 bool yb_can_pushdown_func(Oid funcid)
