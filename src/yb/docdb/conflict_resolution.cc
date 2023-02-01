@@ -959,7 +959,7 @@ class TransactionConflictResolverContext : public ConflictResolverContextBase {
     IntentTypesContainer container;
     IntentProcessor write_processor(
         &container,
-        GetStrongIntentTypeSet(metadata_.isolation, docdb::OperationKind::kWrite, row_mark));
+        GetStrongIntentTypeSet(metadata_.isolation, docdb::OperationKind::kWrite, ROW_MARK_ABSENT));
     for (const auto& doc_op : doc_ops()) {
       paths.clear();
       IsolationLevel ignored_isolation_level;

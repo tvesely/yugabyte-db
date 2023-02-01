@@ -555,17 +555,17 @@ Status WriteQuery::DoExecute() {
   }
 
 //  // Should I add locks here like for serializable above?
-//  for (const auto& doc_op : doc_ops_) {
-//    write_batch.set_row_mark_type(RowMarkType::ROW_MARK_KEYSHARE);
-//    paths.clear();
-//    RETURN_NOT_OK(doc_op->GetReadLockPaths(&paths));
-//    for (const auto& path : paths) {
-//      auto key = path.as_slice();
-//      auto& pair = write_batch.mutable_read_pairs()->emplace_back();
-//      pair.dup_key(key);
-//      pair.dup_value(std::string(1, docdb::KeyEntryTypeAsChar::kNullLow));
-//    }
-//  }
+  for (const auto& doc_op : doc_ops_) {
+    write_batch.set_row_mark_type(RowMarkType::ROW_MARK_KEYSHARE);
+    paths.clear();
+    RETURN_NOT_OK(doc_op->GetReadLockPaths(&paths));
+    for (const auto& path : paths) {
+      auto key = path.as_slice();
+      auto& pair = write_batch.mutable_read_pairs()->emplace_back();
+      pair.dup_key(key);
+      pair.dup_value(std::string(1, docdb::KeyEntryTypeAsChar::kNullLow));
+    }
+  }
 
   auto conflict_management_policy = GetConflictManagementPolicy(
       tablet->wait_queue(), write_batch);

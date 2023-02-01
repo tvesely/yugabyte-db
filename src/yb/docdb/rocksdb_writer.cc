@@ -206,8 +206,8 @@ TransactionalWriter::TransactionalWriter(
 Status TransactionalWriter::Apply(rocksdb::DirectWriteHandler* handler) {
   VLOG(4) << "PrepareTransactionWriteBatch(), write_id = " << write_id_;
 
-  row_mark_ = GetRowMarkTypeFromPB(put_batch_);
   handler_ = handler;
+  row_mark_ = ROW_MARK_ABSENT;
 
   if (metadata_to_store_) {
     auto txn_value_type = KeyEntryTypeAsChar::kTransactionId;
@@ -227,13 +227,14 @@ Status TransactionalWriter::Apply(rocksdb::DirectWriteHandler* handler) {
       ? put_batch_.subtransaction().subtransaction_id()
       : kMinSubTransactionId;
 
+  // During consensus update, this appears to be where it actually writes intents
   if (!put_batch_.write_pairs().empty()) {
     if (IsValidRowMarkType(row_mark_)) {
       LOG(WARNING) << "Performing a write with row lock " << RowMarkType_Name(row_mark_)
                    << " when only reads are expected";
     }
     strong_intent_types_ = GetStrongIntentTypeSet(
-        isolation_level_, OperationKind::kWrite, row_mark_);
+        isolation_level_, OperationKind::kWrite, ROW_MARK_ABSENT);
 
     // We cannot recover from failures here, because it means that we cannot apply replicated
     // operation.
@@ -242,11 +243,17 @@ Status TransactionalWriter::Apply(rocksdb::DirectWriteHandler* handler) {
   }
 
   if (!put_batch_.read_pairs().empty()) {
+
+    // TODO: HACK: only set the  row mark when enumerating read intents.
+    row_mark_ = GetRowMarkTypeFromPB(put_batch_);
     strong_intent_types_ = GetStrongIntentTypeSet(
         isolation_level_, OperationKind::kRead, row_mark_);
     RETURN_NOT_OK(EnumerateIntents(
         put_batch_.read_pairs(), std::ref(*this), partial_range_key_intents_));
   }
+
+  // Is this the correct spot to mark the locks for a read reference?
+
 
   return Finish();
 }
@@ -287,8 +294,12 @@ Status TransactionalWriter::operator()(
       value_slice,
   }};
   // Store a row lock indicator rather than data (in value_slice) for row lock intents.
+  // TODO: Reusing the read_pairs() field  will work in theory, but we run into the problem of
+  //       upgrade. If the row_mark with mixed read/write pairs is sent to a node that has not
+  //       been upgraded, it will overwrite the key/value pairs for whe write. This can seriously
+  //       damage a database. We probably need to add a new lock_pairs() to the proto.
   if (IsValidRowMarkType(row_mark_)) {
-    value.back() = Slice(&row_lock_value_type, 1);
+    value.back() = Slice(&row_lock_value_type, 1); // TODO: This is probably why the intents aren't being written when row mark is set. Needs some other way of marking these rows.
   }
 
   ++intra_txn_write_id_;

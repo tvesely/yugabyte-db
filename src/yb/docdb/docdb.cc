@@ -141,7 +141,7 @@ Result<DetermineKeysToLockResult> DetermineKeysToLock(
       level = isolation_level;
     }
     IntentTypeSet strong_intent_types = GetStrongIntentTypeSet(level, operation_kind,
-                                                               row_mark_type);
+                                                               ROW_MARK_ABSENT);
     if (isolation_level == IsolationLevel::SERIALIZABLE_ISOLATION &&
         operation_kind == OperationKind::kWrite &&
         doc_op->RequireReadSnapshot()) {
@@ -324,7 +324,7 @@ Status AssembleDocWriteBatch(const vector<unique_ptr<DocOperation>>& doc_write_o
 
     RETURN_NOT_OK(s);
   }
-  doc_write_batch.MoveToWriteBatchPB(write_batch);
+  doc_write_batch.MoveToWriteBatchPB(write_batch); // This is where we update the put_batch_, which is what is actually written to the tablet.
   return Status::OK();
 }
 
