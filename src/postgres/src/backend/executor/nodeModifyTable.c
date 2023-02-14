@@ -1475,69 +1475,6 @@ ExecUpdate(ModifyTableState *mtstate,
 			}
 		}
 
-		TupleConstr *constr = resultRelationDesc->rd_att->constr;
-
-		// TODO: these references really should be gathered during planning, not
-		//       here.
-		if (constr && constr->num_check > 0)
-		{
-			int			 ncheck = constr->num_check;
-			ConstrCheck *check = constr->check;
-			// TODO: this really should be a bms
-			List		*colrefs = NIL;
-			bool		 needs_all_columns = false;
-			for (int i = 0; i < ncheck; i++)
-			{
-				Expr *checkconstr;
-				bool  all_references_valid = false;
-
-				// TODO: is the overhead of doing this too costly?
-				checkconstr = stringToNode(check[i].ccbin);
-
-				// TODO: This is specifically designed to check if we can
-				//       push down an expression... It will successfully
-				//       round up column references for now, but this really
-				//       should use a more specific function to evaluate this.
-				all_references_valid = YbCanPushdownExpr(checkconstr, &colrefs);
-
-				if (!all_references_valid)
-				{
-					needs_all_columns = true;
-					break;
-				}
-			}
-
-			AttrNumber firstLowInvalidAttributeNumber = YBGetFirstLowInvalidAttributeNumber(resultRelationDesc);
-
-			if (needs_all_columns) {
-				for (int idx = 0; idx < resultRelationDesc->rd_att->natts; idx++)
-				{
-					FormData_pg_attribute *att_desc = TupleDescAttr(resultRelationDesc->rd_att, idx);
-
-					AttrNumber attnum  = att_desc->attnum;
-
-					if (!IsRealYBColumn(resultRelationDesc, attnum))
-						continue;
-
-					int bms_idx = attnum - firstLowInvalidAttributeNumber;
-
-					checkConstraintRefs = bms_add_member(checkConstraintRefs, bms_idx);
-				}
-			} else {
-				ListCell   *l;
-				foreach(l, colrefs)
-				{
-					YbExprParamDesc *col = (YbExprParamDesc *) lfirst(l);
-					checkConstraintRefs = bms_add_member(checkConstraintRefs, col->attno - firstLowInvalidAttributeNumber);
-				}
-			}
-
-			// Remove the updated columns from the bms
-			checkConstraintRefs = bms_del_members(checkConstraintRefs, actualUpdatedCols);
-			// Remove the primary key columns from the bms
-			checkConstraintRefs = bms_del_members(checkConstraintRefs, YBGetTablePrimaryKeyBms(resultRelationDesc));
-		}
-
 		bool is_pk_updated =
 			bms_overlap(YBGetTablePrimaryKeyBms(resultRelationDesc), actualUpdatedCols);
 
@@ -1555,6 +1492,81 @@ ExecUpdate(ModifyTableState *mtstate,
 		}
 		else
 		{
+			TupleConstr *constr = resultRelationDesc->rd_att->constr;
+
+			// TODO: these references really should be gathered during planning, not
+			//       here.
+			if (constr && constr->num_check > 0)
+			{
+				AttrNumber firstLowInvalidAttributeNumber =
+					YBGetFirstLowInvalidAttributeNumber(resultRelationDesc);
+				int			 ncheck = constr->num_check;
+				ConstrCheck *check = constr->check;
+				bool		 needs_all_columns = false;
+				// TODO: When a constraint does not reference any of the columns being updated, then no locking is necessary
+				Bitmapset **checkConstraintColumnRefs = (Bitmapset **) palloc0(sizeof(Bitmapset*) * ncheck);
+
+				for (int i = 0; i < ncheck; i++)
+				{
+					Expr *checkconstr;
+					bool  all_references_valid = false;
+					// TODO: this really should be a bms
+					// TODO: this should be free'd or something
+					List		*colrefs = NIL;
+
+					// TODO: is the overhead of doing this too costly? - probably not in planner
+					checkconstr = stringToNode(check[i].ccbin);
+
+					// TODO: This is specifically designed to check if we can
+					//       push down an expression... It will successfully
+					//       round up column references for now, but this really
+					//       should use a more specific function to evaluate this.
+					all_references_valid = YbCanPushdownExpr(checkconstr, &colrefs);
+
+					if (!all_references_valid)
+					{
+						needs_all_columns = true;
+						break;
+					}
+
+					ListCell   *l;
+					foreach(l, colrefs)
+					{
+						YbExprParamDesc *col = (YbExprParamDesc *) lfirst(l);
+						checkConstraintColumnRefs[i] = bms_add_member(checkConstraintColumnRefs[i], col->attno - firstLowInvalidAttributeNumber);
+					}
+				}
+
+
+				if (needs_all_columns) {
+					for (int idx = 0; idx < resultRelationDesc->rd_att->natts; idx++)
+					{
+						FormData_pg_attribute *att_desc = TupleDescAttr(resultRelationDesc->rd_att, idx);
+
+						AttrNumber attnum  = att_desc->attnum;
+
+						if (!IsRealYBColumn(resultRelationDesc, attnum))
+							continue;
+
+						int bms_idx = attnum - firstLowInvalidAttributeNumber;
+
+						checkConstraintRefs = bms_add_member(checkConstraintRefs, bms_idx);
+					}
+				} else {
+					for(int i = 0; i < ncheck; i++) {
+						if(bms_overlap(checkConstraintColumnRefs[i], actualUpdatedCols)) {
+							checkConstraintRefs = bms_add_members(checkConstraintRefs, checkConstraintColumnRefs[i]);
+						}
+					}
+				}
+
+				// Remove the updated columns from the bms, because they will be locked by the update
+				checkConstraintRefs = bms_del_members(checkConstraintRefs, actualUpdatedCols);
+				// Remove the primary key columns from the bms
+				// TODO: when any column in the primary key is referenced, what should we lock?
+				//checkConstraintRefs = bms_del_members(checkConstraintRefs, YBGetTablePrimaryKeyBms(resultRelationDesc));
+			}
+
 			row_found = YBCExecuteUpdate(resultRelationDesc,
 										 planSlot,
 										 oldtuple,

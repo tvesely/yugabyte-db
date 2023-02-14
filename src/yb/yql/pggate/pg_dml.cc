@@ -154,7 +154,6 @@ Status PgDml::AppendColumnLockRef(int attr_num) {
 
   // TODO: uncomment this if the error above is not removed
   //if (!col.is_virtual_column()){
-  col.set_read_requested(true);  // TODO: do I need to set read requested for this column?
   // If the row mark is already set, pick the strongest type
   col.set_lock_requested(true); // can we set this for columns that are a virtual column?
   //}
@@ -240,6 +239,37 @@ void PgDml::ColRefsToPB() {
 }
 
 // TODO: Unless this field gets added to PgsqlWriteRequest, this should probably be moved to PgDmlWrite?
+// TODO: This needs to look like the above function or this gets appended to every request like so:
+/*
+       transaction {
+        transaction_id: "\240\264\"\330\350\351L\367\276\211\231u\222\267bA"
+        isolation: READ_COMMITTED
+        status_tablet: "d80b88a8b16342da9de1a7af52d6d989"
+        priority: 18446744073709551615
+        start_hybrid_time: 6866605005889286144
+        locality: GLOBAL
+      }
+      DEPRECATED_may_have_metadata: true
+      subtransaction {
+        subtransaction_id: 2
+        aborted {
+        }
+      }
+      table_schema_version {
+        schema_version: 0
+      }
+      table_schema_version {
+        schema_version: 0
+      }
+      lock_groups {
+        row_mark_type: ROW_MARK_KEYSHARE
+      }
+      lock_groups {
+        row_mark_type: ROW_MARK_KEYSHARE
+      }
+    }
+
+ */
 void PgDml::ColRefsForLockToPB(LWPgsqlColRefForLockPB *col_refs, RowMarkType lock_mode) {
   col_refs->Clear();
 

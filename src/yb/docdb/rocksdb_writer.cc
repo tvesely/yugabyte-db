@@ -243,7 +243,6 @@ Status TransactionalWriter::Apply(rocksdb::DirectWriteHandler* handler) {
   }
 
   if (!put_batch_.read_pairs().empty()) {
-
     // TODO: HACK: only set the  row mark when enumerating read intents.
     row_mark_ = GetRowMarkTypeFromPB(put_batch_);
     strong_intent_types_ = GetStrongIntentTypeSet(
@@ -253,7 +252,13 @@ Status TransactionalWriter::Apply(rocksdb::DirectWriteHandler* handler) {
   }
 
   // Is this the correct spot to mark the locks for a read reference?
-
+  for(const auto &lock_group : put_batch_.lock_groups()) {
+    row_mark_ = GetRowMarkTypeFromPB(lock_group);
+    strong_intent_types_ = GetStrongIntentTypeSet(
+        isolation_level_, OperationKind::kRead, row_mark_);
+    RETURN_NOT_OK(EnumerateIntents(
+        lock_group.lock_pairs(), std::ref(*this), partial_range_key_intents_));
+  }
 
   return Finish();
 }

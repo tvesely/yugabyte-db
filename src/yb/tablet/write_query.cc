@@ -554,14 +554,19 @@ Status WriteQuery::DoExecute() {
     }
   }
 
-//  // Should I add locks here like for serializable above?
+  // TODO: Should I add locks here like for serializable above, or should this be somewhere like Prepare()...
+  //       should this maybe actually be done in the postgres backend? If it is done there, we don't necessarily
+  //       need to process the keys to lock on the tserver side at all.
   for (const auto& doc_op : doc_ops_) {
-    write_batch.set_row_mark_type(RowMarkType::ROW_MARK_KEYSHARE);
     paths.clear();
+    auto lock_group = write_batch.add_lock_groups();
+
+    // TODO: This needs to be set for each set of paths- each set of paths needs its own lock type
+    lock_group->set_row_mark_type(RowMarkType::ROW_MARK_KEYSHARE);
     RETURN_NOT_OK(doc_op->GetReadLockPaths(&paths));
     for (const auto& path : paths) {
       auto key = path.as_slice();
-      auto& pair = write_batch.mutable_read_pairs()->emplace_back();
+      auto& pair = lock_group->mutable_lock_pairs()->emplace_back();
       pair.dup_key(key);
       pair.dup_value(std::string(1, docdb::KeyEntryTypeAsChar::kNullLow));
     }

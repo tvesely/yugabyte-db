@@ -997,6 +997,21 @@ class TransactionConflictResolverContext : public ConflictResolverContextBase {
           resolver->partial_range_key_intents()));
     }
 
+    const auto& lock_groups = write_batch_.lock_groups();
+    for (const auto& lock_group : lock_groups) {
+      IntentProcessor lock_processor(
+          &container,
+          GetStrongIntentTypeSet(
+              metadata_.isolation, docdb::OperationKind::kRead, lock_group.row_mark_type()));
+      RETURN_NOT_OK(EnumerateIntents(
+          lock_group.lock_pairs(),
+          [&lock_processor](auto strength, FullDocKey full_doc_key, auto, auto intent_key, auto) {
+            lock_processor.Process(strength, full_doc_key, intent_key);
+            return Status::OK();
+          },
+          resolver->partial_range_key_intents()));
+    }
+
     if (container.empty()) {
       return Status::OK();
     }
@@ -1162,6 +1177,9 @@ class OperationConflictResolverContext : public ConflictResolverContextBase {
             PartialRangeKeyIntents::kTrue));
       }
     }
+
+    // TODO: do I need to add anything here? this appears to be for non-transactional workloads,
+    //       so maybe an assert is useful in the weakest case?
 
     return Status::OK();
   }
