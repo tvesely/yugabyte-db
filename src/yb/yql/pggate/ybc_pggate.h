@@ -650,7 +650,7 @@ void* YBCPgGetThreadLocalErrStatus();
 void YBCPgResetCatalogReadTime();
 
 YBCStatus YBCGetLockStatusData(
-    YBCPgOid database, YBCPgOid relation, const char *transaction_id, YBCLockData **lock_data);
+    YBCPgOid database, YBCPgOid relation, YBCPgUuid *transaction_id, YBCLockData **lock_data);
 
 YBCStatus YBCGetTabletServerHosts(YBCServerDescriptor **tablet_servers, size_t* numservers);
 

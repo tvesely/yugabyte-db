@@ -265,7 +265,7 @@ class PgSession : public RefCountedThreadSafe<PgSession> {
 
   // Smart driver functions.
   // -------------
-  Result<client::NodeLockInfo> GetLockStatusData(const std::string& table_id, const std::string& transaction_id);
+  Result<client::NodeLockInfo> GetLockStatusData(const std::string& table_id, const Uuid& transaction_id);
   Result<client::TabletServersInfo> ListTabletServers();
 
   Status GetIndexBackfillProgress(std::vector<PgObjectId> index_ids, uint64_t** backfill_statuses);

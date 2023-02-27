@@ -602,15 +602,16 @@ class PgClient::Impl {
     return Status::OK();
   }
 
-  Result<client::NodeLockInfo> GetLockStatusData(const std::string& table_id, const std::string& transaction_id) {
+  Result<client::NodeLockInfo> GetLockStatusData(const std::string& table_id, const Uuid& transaction_id) {
     tserver::PgGetLockStatusRequestPB req;
     tserver::PgGetLockStatusResponsePB resp;
 
     if (!table_id.empty()) {
       req.set_table_id(table_id);
     }
-    if (!transaction_id.empty()) {
-      req.set_transaction_id(transaction_id);
+    if (transaction_id != Uuid::Nil()) {
+      std::string *transaction = req.mutable_transaction_id();
+      transaction_id.ToBytes(transaction);
     }
 
     RETURN_NOT_OK(proxy_->GetLockStatus(req, &resp, PrepareController()));
@@ -826,7 +827,7 @@ Status PgClient::GetIndexBackfillProgress(
   return impl_->GetIndexBackfillProgress(index_ids, backfill_statuses);
 }
 
-Result<client::NodeLockInfo> PgClient::GetLockStatusData(const std::string& table_id, const std::string transaction_id) {
+Result<client::NodeLockInfo> PgClient::GetLockStatusData(const std::string& table_id, const Uuid& transaction_id) {
   return impl_->GetLockStatusData(table_id, transaction_id);
 }
 
