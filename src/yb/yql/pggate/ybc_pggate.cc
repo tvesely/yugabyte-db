@@ -1387,9 +1387,9 @@ void YBCSetTimeout(int timeout_ms, void* extra) {
 }
 
 YBCStatus YBCGetLockStatusData(
-    YBCPgOid database, YBCPgOid relation, const char *transaction_id, YBCLockData **lock_data) {
+    YBCPgOid database, YBCPgOid relation, YBCPgUuid *transaction_id, YBCLockData **lock_data) {
   const std::string table_id(relation != kInvalidOid ? GetPgsqlTableId(database, relation) : "");
-  const std::string transaction(transaction_id ? transaction_id : "");
+  const Uuid transaction = transaction_id ? transaction_id->ToUuid() : Uuid::Nil();
 
   const auto locks_result = pgapi->GetLockStatusData(table_id, transaction);
   if (!locks_result.ok()) {

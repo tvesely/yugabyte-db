@@ -31,6 +31,7 @@
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/date.h"
+#include "utils/uuid.h"
 
 /* Working status for yb_lock_status */
 typedef struct
@@ -51,8 +52,8 @@ yb_lock_status(PG_FUNCTION_ARGS)
 	FuncCallContext *funcctx;
 	YB_Lock_Status	*mystatus;
 	YBCLockData		*lockData;
-	Oid				 relation = InvalidOid;
-	const char		*transaction_id = NULL;
+	YBCPgOid         relation = InvalidOid;
+	YBCPgUuid 	    *transaction_id = NULL;
 
 	/*
 	 *  If this is not a superuser, do not return actual user data.
@@ -73,8 +74,7 @@ yb_lock_status(PG_FUNCTION_ARGS)
 
 	if (!PG_ARGISNULL(1))
 	{
-		text *transaction = PG_GETARG_TEXT_PP(1);
-		transaction_id = text_to_cstring(transaction);
+		transaction_id = (YBCPgUuid *) PG_GETARG_UUID_P(1);
 	}
 
 	if (SRF_IS_FIRSTCALL())

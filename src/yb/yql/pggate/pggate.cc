@@ -1867,7 +1867,7 @@ void PgApiImpl::SetTimeout(int timeout_ms) {
   pg_session_->SetTimeout(timeout_ms);
 }
 
-Result<client::NodeLockInfo> PgApiImpl::GetLockStatusData(const std::string& table_id, const std::string& transaction_id) {
+Result<client::NodeLockInfo> PgApiImpl::GetLockStatusData(const std::string& table_id, const Uuid& transaction_id) {
     return pg_session_->GetLockStatusData(table_id, transaction_id);
 }
 
