@@ -19,6 +19,8 @@
 #include <stdint.h>
 
 #ifdef __cplusplus
+#include "yb/util/status.h"
+#include "yb/util/result.h"
 #include "yb/util/slice.h"
 #include "yb/util/uuid.h"
 
@@ -208,6 +210,17 @@ typedef struct PgUuid
   unsigned char data[YBC_UUID_LEN];
 
 #ifdef __cplusplus
+  yb::Status EncodeFromString(const std::string &input) {
+    yb::Uuid uuid = yb::Uuid::Nil();
+    auto uuid_result = yb::Uuid::FromString(input);
+    if (!uuid_result.ok()) {
+      return uuid_result.status();
+    }
+
+    uuid.ToBytes(data);
+    return yb::Status::OK();
+  }
+
   yb::Slice ToSlice() { return yb::Slice(data, YBC_UUID_LEN); }
   yb::Uuid ToUuid() { return yb::Uuid::TryFullyDecode(this->ToSlice()); }
 #endif
@@ -453,7 +466,7 @@ typedef struct YBCLockInstanceData {
   uint64_t *wait_end;
   const char *node;
   const char *tablet_id;
-  const char *transaction_id;
+  YBCPgUuid transaction_id;
   uint32_t subtransaction_id;
   bool is_explicit;
   uint64_t num_hash_cols;
