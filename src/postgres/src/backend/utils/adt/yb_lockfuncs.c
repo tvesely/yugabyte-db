@@ -116,7 +116,7 @@ yb_lock_status(PG_FUNCTION_ARGS)
 		TupleDescInitEntry(tupdesc, (AttrNumber) 11, "tablet_id",
 						   TEXTOID, -1, 0);
 		TupleDescInitEntry(tupdesc, (AttrNumber) 12, "transaction_id",
-						   TEXTOID, -1, 0);
+						   UUIDOID, -1, 0);
 		TupleDescInitEntry(tupdesc, (AttrNumber) 13, "subtransaction_id",
 						   INT4OID, -1, 0);
 		TupleDescInitEntry(tupdesc, (AttrNumber) 14, "is_explicit",
@@ -230,10 +230,7 @@ yb_lock_status(PG_FUNCTION_ARGS)
 		else
 			nulls[10] = true;
 
-		if(instance->transaction_id)
-			values[11] = CStringGetTextDatum(instance->transaction_id);
-		else
-			nulls[11] = true;
+		values[11] = UUIDPGetDatum((pg_uuid_t *) &instance->transaction_id);
 
 		values[12] = UInt32GetDatum(instance->subtransaction_id);
 		values[13] = BoolGetDatum(instance->is_explicit);

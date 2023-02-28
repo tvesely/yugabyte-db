@@ -1468,7 +1468,12 @@ YBCStatus YBCGetLockStatusData(
         lock->node = YBCPAllocStdString(node.permanent_uuid());
         lock->tablet_id = YBCPAllocStdString(tab.tablet_id());
 
-        lock->transaction_id = YBCPAllocStdString(l.transaction_id());
+        auto uuid_status = lock->transaction_id.EncodeFromString(l.transaction_id());
+        if (!uuid_status.ok()) {
+          //TODO: How to elog in pggate?
+          return ToYBCStatus(uuid_status);
+        }
+
         lock->subtransaction_id = l.subtransaction_id();
 
         lock->num_hash_cols = l.hash_cols().size();
