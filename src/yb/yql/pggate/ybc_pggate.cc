@@ -1402,9 +1402,9 @@ void YBCSetTimeout(int timeout_ms, void* extra) {
 }
 
 YBCStatus YBCGetLockStatusData(
-    YBCPgOid database, YBCPgOid relation, YBCPgUuid *transaction_id, YBCLockData **lock_data) {
+    YBCPgOid database, YBCPgOid relation, unsigned char *transaction_id, YBCLockData **lock_data) {
   const std::string table_id(relation != kInvalidOid ? GetPgsqlTableId(database, relation) : "");
-  const Uuid transaction = transaction_id ? transaction_id->ToUuid() : Uuid::Nil();
+  const std::string transaction(transaction_id ? Slice(transaction_id, YBC_UUID_LEN).ToBuffer() : "");
 
   const auto locks_result = pgapi->GetLockStatusData(table_id, transaction);
   if (!locks_result.ok()) {
@@ -1483,11 +1483,15 @@ YBCStatus YBCGetLockStatusData(
         lock->node = YBCPAllocStdString(node.permanent_uuid());
         lock->tablet_id = YBCPAllocStdString(tab.tablet_id());
 
-        auto uuid_status = lock->transaction_id.EncodeFromString(l.transaction_id());
-        if (!uuid_status.ok()) {
-          //TODO: How to elog in pggate?
-          return ToYBCStatus(uuid_status);
+        Uuid uuid = Uuid::Nil();
+        auto uuid_result = yb::Uuid::FromString(l.transaction_id());
+        // If parsing fails, just keep the empty uuid
+        if (uuid_result.ok()) {
+          uuid = uuid_result.get();
         }
+
+        // Convert the transaction_id into the Postgres format
+        uuid.ToBytes(lock->transaction_id.data);
 
         lock->subtransaction_id = l.subtransaction_id();
 

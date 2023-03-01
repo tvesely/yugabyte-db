@@ -649,8 +649,10 @@ void* YBCPgGetThreadLocalErrStatus();
 
 void YBCPgResetCatalogReadTime();
 
+// TODO: How do should pass complex datatypes like UUID between Postgres and pg_gate?
 YBCStatus YBCGetLockStatusData(
-    YBCPgOid database, YBCPgOid relation, YBCPgUuid *transaction_id, YBCLockData **lock_data);
+    YBCPgOid database, YBCPgOid relation, unsigned char *transaction_id /* pg_uuid_t.data */,
+    YBCLockData **lock_data);
 
 YBCStatus YBCGetTabletServerHosts(YBCServerDescriptor **tablet_servers, size_t* numservers);
 
