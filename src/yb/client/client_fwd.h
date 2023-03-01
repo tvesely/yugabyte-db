@@ -107,7 +107,6 @@ struct YBqlWritePrimaryKeyComparator;
 using LocalTabletFilter = std::function<void(std::vector<const TabletId*>*)>;
 using VersionedTablePartitionListPtr = std::shared_ptr<const VersionedTablePartitionList>;
 using TablePartitionListPtr = std::shared_ptr<const TablePartitionList>;
-using NodeLockInfo = google::protobuf::RepeatedPtrField<yb::tserver::PgGetLockStatusResponsePB_NodeLockStatusResponsePB>; // TODO: make this a GetLockStatusResponse
 using TabletServersInfo = std::vector<YBTabletServerPlacementInfo>;
 using YBqlOpPtr = std::shared_ptr<YBqlOp>;
 using YBqlReadOpPtr = std::shared_ptr<YBqlReadOp>;
