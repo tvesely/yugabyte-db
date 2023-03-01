@@ -53,7 +53,7 @@ yb_lock_status(PG_FUNCTION_ARGS)
 	YB_Lock_Status	*mystatus;
 	YBCLockData		*lockData;
 	YBCPgOid         relation = InvalidOid;
-	YBCPgUuid 	    *transaction_id = NULL;
+	pg_uuid_t 	    *transaction_id = NULL;
 
 	/*
 	 *  If this is not a superuser, do not return actual user data.
@@ -74,12 +74,12 @@ yb_lock_status(PG_FUNCTION_ARGS)
 
 	if (!PG_ARGISNULL(1))
 	{
-		transaction_id = (YBCPgUuid *) PG_GETARG_UUID_P(1);
+		transaction_id = PG_GETARG_UUID_P(1);
 	}
 
 	if (SRF_IS_FIRSTCALL())
 	{
-		TupleDesc	tupdesc;
+		TupleDesc	  tupdesc;
 		MemoryContext oldcontext;
 
 		/* create a function context for cross-call persistence */
@@ -135,7 +135,7 @@ yb_lock_status(PG_FUNCTION_ARGS)
 		mystatus = (YB_Lock_Status *) palloc(sizeof(YB_Lock_Status));
 		funcctx->user_fctx = (void *) mystatus;
 
-		HandleYBStatus(YBCGetLockStatusData(MyDatabaseId, relation, transaction_id, &lockData));
+		HandleYBStatus(YBCGetLockStatusData(MyDatabaseId, relation, transaction_id->data, &lockData));
 
 		mystatus->lockData = lockData;
 		mystatus->currIdx = 0;
@@ -202,6 +202,11 @@ yb_lock_status(PG_FUNCTION_ARGS)
 
 		if(instance->wait_start)
 		{
+			/*
+			 * TODO: Because there is currently no good way to pass timestamps
+			 *       between Postgres and the tserver, we expect that wait_start
+			 *       is unix epoch time in microseconds, and convert it here
+			 */
 			*instance->wait_start = (TimestampTz) *instance->wait_start -
 					   ((POSTGRES_EPOCH_JDATE - UNIX_EPOCH_JDATE) * USECS_PER_DAY);
 
@@ -230,7 +235,7 @@ yb_lock_status(PG_FUNCTION_ARGS)
 		else
 			nulls[10] = true;
 
-		values[11] = UUIDPGetDatum((pg_uuid_t *) &instance->transaction_id);
+		values[11] = UUIDPGetDatum(&instance->transaction_id);
 
 		values[12] = UInt32GetDatum(instance->subtransaction_id);
 		values[13] = BoolGetDatum(instance->is_explicit);
