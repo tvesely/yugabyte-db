@@ -602,7 +602,7 @@ class PgClient::Impl {
     return Status::OK();
   }
 
-  Result<client::NodeLockInfo> GetLockStatusData(const std::string& table_id, const std::string& transaction_id) {
+  Result<yb::tserver::PgGetLockStatusResponsePB> GetLockStatusData(const std::string& table_id, const std::string& transaction_id) {
     tserver::PgGetLockStatusRequestPB req;
     tserver::PgGetLockStatusResponsePB resp;
 
@@ -616,7 +616,7 @@ class PgClient::Impl {
     RETURN_NOT_OK(proxy_->GetLockStatus(req, &resp, PrepareController()));
     RETURN_NOT_OK(ResponseStatus(resp));
 
-    return resp.node_locks();
+    return resp;
   }
 
   Result<int32> TabletServerCount(bool primary_only) {
@@ -826,7 +826,7 @@ Status PgClient::GetIndexBackfillProgress(
   return impl_->GetIndexBackfillProgress(index_ids, backfill_statuses);
 }
 
-Result<client::NodeLockInfo> PgClient::GetLockStatusData(const std::string& table_id, const std::string transaction_id) {
+Result<yb::tserver::PgGetLockStatusResponsePB> PgClient::GetLockStatusData(const std::string& table_id, const std::string transaction_id) {
   return impl_->GetLockStatusData(table_id, transaction_id);
 }
 

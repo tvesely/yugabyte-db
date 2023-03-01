@@ -1410,10 +1410,10 @@ YBCStatus YBCGetLockStatusData(
   if (!locks_result.ok()) {
     return ToYBCStatus(locks_result.status());
   }
-  const auto &nodes = locks_result.get();
+  const auto &lock_status = locks_result.get();
 
   uint nelements = 0;
-  for (auto &node : nodes)
+  for (auto &node : lock_status.node_locks())
     for (auto &tab : node.tablet_lock_infos())
       nelements += tab.locks_size();
 
@@ -1429,7 +1429,7 @@ YBCStatus YBCGetLockStatusData(
   dest->locks = locks;
 
   int el = 0;
-  for (auto &node : nodes) {
+  for (auto &node : lock_status.node_locks()) {
     for (auto tab : node.tablet_lock_infos()) {
       for (auto &l : tab.locks()) {
         YBCLockInstanceData *lock = &dest->locks[el];
