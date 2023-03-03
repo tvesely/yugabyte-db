@@ -949,6 +949,11 @@ YBCStatus YBCPgGetEstimatedRowCount(YBCPgStatement handle, double *liverows, dou
   return ToYBCStatus(pgapi->GetEstimatedRowCount(handle, liverows, deadrows));
 }
 
+// WRITE Operations -------------------------------------------------------------------------------
+YBCStatus YBCPgDmlWriteSetRowLockRequired(YBCPgStatement handle) {
+  return ToYBCStatus(pgapi->DmlWriteSetRowLockRequired(handle));
+}
+
 // INSERT Operations -------------------------------------------------------------------------------
 YBCStatus YBCPgNewInsert(const YBCPgOid database_oid,
                          const YBCPgOid table_oid,

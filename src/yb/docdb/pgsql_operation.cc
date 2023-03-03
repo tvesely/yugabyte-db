@@ -1070,7 +1070,10 @@ Status PgsqlWriteOperation::GetDocPaths(GetDocPathsMode mode,
     }
     case GetDocPathsMode::kIntents: {
       const google::protobuf::RepeatedPtrField<PgsqlColumnValuePB>* column_values = nullptr;
-      if (request_.stmt_type() == PgsqlWriteRequestPB::PGSQL_INSERT ||
+      if(request_.has_is_row_lock_required() && request_.is_row_lock_required()) {
+        // Currently, is_row_lock_required() is set when check constraints are present.
+      }
+      else if (request_.stmt_type() == PgsqlWriteRequestPB::PGSQL_INSERT ||
           request_.stmt_type() == PgsqlWriteRequestPB::PGSQL_UPSERT) {
         column_values = &request_.column_values();
       } else if (request_.stmt_type() == PgsqlWriteRequestPB::PGSQL_UPDATE) {

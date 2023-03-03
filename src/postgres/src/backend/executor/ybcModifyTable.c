@@ -798,7 +798,7 @@ bool YBCExecuteUpdate(Relation rel,
 	Datum			ybctid;
 	ListCell	   *lc;
 
-	/* is_single_row_txn always implies target tuple wasn't fetched. */
+		/* is_single_row_txn always implies target tuple wasn't fetched. */
 	Assert(!is_single_row_txn || !target_tuple_fetched);
 
 	/* Create update statement. */
@@ -909,6 +909,11 @@ bool YBCExecuteUpdate(Relation rel,
 											&type_attrs);
 		HandleYBStatus(YbPgDmlAppendColumnRef(update_stmt, yb_expr, true));
 	}
+
+	TupleConstr *constr = rel->rd_att->constr;
+
+	if (constr && constr->num_check > 0)
+		HandleYBStatus(YBCPgDmlWriteSetRowLockRequired(update_stmt));
 
 	/* Execute the statement. */
 

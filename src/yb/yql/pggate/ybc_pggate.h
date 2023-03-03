@@ -461,6 +461,9 @@ YBCStatus YBCPgExecSample(YBCPgStatement handle);
 
 YBCStatus YBCPgGetEstimatedRowCount(YBCPgStatement handle, double *liverows, double *deadrows);
 
+// Write ------------------------------------------------------------------------------------------
+YBCStatus YBCPgDmlWriteSetRowLockRequired(YBCPgStatement handle);
+
 // INSERT ------------------------------------------------------------------------------------------
 YBCStatus YBCPgNewInsert(YBCPgOid database_oid,
                          YBCPgOid table_oid,
