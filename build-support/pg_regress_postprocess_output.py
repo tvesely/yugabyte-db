@@ -38,24 +38,28 @@ def main():
     # 2) Also mask any uuids since they are randomly generated and will vary across runs.
     lines = [line.rstrip() for line in lines]
 
-    def mask_uuid4s(unmasked_line):
-        uuid_start_indices = []
-        line_copy_with_uuid4s_masked = ""
-        for m in re.finditer(
-          r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-4[0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}",
-          unmasked_line):
-            uuid_start_indices.append(m.start())
+    mask_uuid4s = r"([0-9A-Fa-f]{8})-([0-9A-Fa-f]{4})-4([0-9A-Fa-f]{3})-([89ABab][0-9A-Fa-f]{3})-([0-9A-Fa-f]{12})"
+    mask_transaction_timestamps = r"Value write after transaction start:\s+{ days:\s+(\d+)\s+time:\s+(\d+):(\d+):(\d+).(\d+) } >= { days:\s+(\d+)\s+time:\s+(\d+):(\d+):(\d+).(\d+) }.*kConflict"
 
-        prev_index = 0
-        for i in uuid_start_indices:
-            line_copy_with_uuid4s_masked += \
-                unmasked_line[prev_index:i] + "********-****-4***-****-************"
-            prev_index = i + len("********-****-4***-****-************")
+    def mask_groups(match):
+        chars = list(match.string)
+        for i, _ in enumerate(match.groups()):
+            start, end = match.span(i+1)
+            for j in range(start,end):
+                chars[j] = "*"
+        start, end = match.span(0)
+        return "".join(chars[start:end])
 
-        line_copy_with_uuid4s_masked += unmasked_line[prev_index:]
-        return line_copy_with_uuid4s_masked
+    # Mask out anything in a regex match group
+    def mask_lines(lines, *regex_list):
+        masked_lines = []
+        for line in lines:
+            for regex in regex_list:
+                line = re.sub(regex, mask_groups, line)
+            masked_lines.append(line)
+        return masked_lines
 
-    lines = [mask_uuid4s(line) for line in lines]
+    lines = mask_lines(lines, mask_uuid4s, mask_transaction_timestamps)
 
     result_lines = []
     i = 0

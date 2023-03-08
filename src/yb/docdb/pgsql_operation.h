@@ -69,6 +69,7 @@ class PgsqlWriteOperation :
       IntentAwareIterator* iter,
       const SubDocKey& sub_doc_key,
       HybridTime min_hybrid_time);
+  bool HasExpression() const;
 
   // Execute write.
   Status Apply(const DocOperationApplyData& data) override;

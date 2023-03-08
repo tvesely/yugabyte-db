@@ -55,8 +55,8 @@
 
 #include "yb/yql/pggate/util/pg_doc_data.h"
 
-using std::vector;
 using std::string;
+using std::vector;
 
 using namespace std::literals;
 
@@ -523,6 +523,13 @@ Result<HybridTime> PgsqlWriteOperation::FindOldestOverwrittenTimestamp(
     VLOG(3) << "iter->Seek " << *doc_key_ << " turned out to be invalid";
   }
   return result;
+}
+
+bool PgsqlWriteOperation::HasExpression() const {
+  return std::any_of(
+      request_.column_new_values().begin(),
+      request_.column_new_values().end(),
+      [](const auto& column_value) { return column_value.expr().has_value(); });
 }
 
 Status PgsqlWriteOperation::Apply(const DocOperationApplyData& data) {
@@ -1036,6 +1043,16 @@ Status PgsqlWriteOperation::GetDocPaths(GetDocPathsMode mode,
   *level = RequireReadSnapshot() ? IsolationLevel::SNAPSHOT_ISOLATION
                                  : IsolationLevel::SERIALIZABLE_ISOLATION;
 
+  // If a concurrent transaction updates a column that is referenced by the CHECK constraint, then
+  // it is possible that the new value will not meet the requirements of the constraint. To protect
+  // the integrity of the data, we need to lock the entire row in both kLock and kIntents modes.
+  // These locks are held in memory until the write has been completed, but are not written to disk.
+  // We don't need to write this lock to disk because any transaction that tries to update a column
+  // will conflict with the in-memory locks. Only the columns being locked are actually written to
+  // intentsdb.
+  const bool row_lock_required =
+      request_.has_is_row_lock_required() && request_.is_row_lock_required();
+
   switch (mode) {
     case GetDocPathsMode::kLock: {
       if (request_.stmt_type() == PgsqlWriteRequestPB::PGSQL_UPDATE) {
@@ -1052,15 +1069,7 @@ Status PgsqlWriteOperation::GetDocPaths(GetDocPathsMode mode,
         //
         // Strong intent for the whole row is required in this case as it may be too expensive to
         // determine what exact columns are read by the expression.
-
-        bool has_expression = false;
-        for (const auto& column_value : request_.column_new_values()) {
-          if (!column_value.expr().has_value()) {
-            has_expression = true;
-            break;
-          }
-        }
-        if (!has_expression) {
+        if (!HasExpression() && !row_lock_required) {
           DocKeyColumnPathBuilder builder(encoded_doc_key_);
           paths->push_back(builder.Build(to_underlying(SystemColumnIds::kLivenessColumn)));
           return Status::OK();
@@ -1070,24 +1079,23 @@ Status PgsqlWriteOperation::GetDocPaths(GetDocPathsMode mode,
     }
     case GetDocPathsMode::kIntents: {
       const google::protobuf::RepeatedPtrField<PgsqlColumnValuePB>* column_values = nullptr;
-      if(request_.has_is_row_lock_required() && request_.is_row_lock_required()) {
-        // Currently, is_row_lock_required() is set when check constraints are present.
-      }
-      else if (request_.stmt_type() == PgsqlWriteRequestPB::PGSQL_INSERT ||
-          request_.stmt_type() == PgsqlWriteRequestPB::PGSQL_UPSERT) {
-        column_values = &request_.column_values();
-      } else if (request_.stmt_type() == PgsqlWriteRequestPB::PGSQL_UPDATE) {
-        column_values = &request_.column_new_values();
-      }
-
-      if (column_values != nullptr && !column_values->empty()) {
-        DocKeyColumnPathBuilder builder(encoded_doc_key_);
-        for (const auto& column_value : *column_values) {
-          paths->push_back(builder.Build(column_value.column_id()));
+      if (!row_lock_required) {
+        if (request_.stmt_type() == PgsqlWriteRequestPB::PGSQL_INSERT ||
+            request_.stmt_type() == PgsqlWriteRequestPB::PGSQL_UPSERT) {
+          column_values = &request_.column_values();
+        } else if (request_.stmt_type() == PgsqlWriteRequestPB::PGSQL_UPDATE) {
+          column_values = &request_.column_new_values();
         }
-        return Status::OK();
+
+        if (column_values != nullptr && !column_values->empty()) {
+          DocKeyColumnPathBuilder builder(encoded_doc_key_);
+          for (const auto& column_value : *column_values) {
+            paths->push_back(builder.Build(column_value.column_id()));
+          }
+          return Status::OK();
+        }
+        break;
       }
-      break;
     }
   }
   // Add row's doc key. Caller code will create strong intent for the whole row in this case.
