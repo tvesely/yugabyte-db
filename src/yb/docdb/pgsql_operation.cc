@@ -525,29 +525,6 @@ Result<HybridTime> PgsqlWriteOperation::FindOldestOverwrittenTimestamp(
   return result;
 }
 
-// TODO: This was extracted from GetDocPaths() as part of a minor refactor...
-//       does this need to call IsExpression()? Why did the original call not check that?
-bool PgsqlWriteOperation::HasExpression() const {
-  switch (request_.stmt_type()) {
-    case PgsqlWriteRequestPB::PGSQL_INSERT: FALLTHROUGH_INTENDED;
-    case PgsqlWriteRequestPB::PGSQL_UPSERT:
-      return std::any_of(
-          request_.column_values().begin(),
-          request_.column_values().end(),
-          [](const auto& column_value) { return column_value.expr().has_value(); });
-    case PgsqlWriteRequestPB::PGSQL_UPDATE:
-      return std::any_of(
-          request_.column_new_values().begin(),
-          request_.column_new_values().end(),
-          [](const auto& column_value) { return column_value.expr().has_value(); });
-    case PgsqlWriteRequestPB::PGSQL_DELETE: FALLTHROUGH_INTENDED;
-    case PgsqlWriteRequestPB::PGSQL_TRUNCATE_COLOCATED: FALLTHROUGH_INTENDED;
-    case PgsqlWriteRequestPB::PGSQL_FETCH_SEQUENCE:
-      return false;
-  }
-  FATAL_INVALID_ENUM_VALUE(PgsqlWriteRequestPB_PgsqlStmtType, request_.stmt_type());
-}
-
 Status PgsqlWriteOperation::Apply(const DocOperationApplyData& data) {
   VLOG(4) << "Write, read time: " << data.read_time << ", txn: " << txn_op_context_;
 
@@ -1085,7 +1062,15 @@ Status PgsqlWriteOperation::GetDocPaths(GetDocPathsMode mode,
         //
         // Strong intent for the whole row is required in this case as it may be too expensive to
         // determine what exact columns are read by the expression.
-        if (!HasExpression() && !row_lock_required) {
+
+        bool has_expression = false;
+        for (const auto& column_value : request_.column_new_values()) {
+          if (!column_value.expr().has_value()) {
+            has_expression = true;
+            break;
+          }
+        }
+        if (!has_expression && !row_lock_required) {
           DocKeyColumnPathBuilder builder(encoded_doc_key_);
           paths->push_back(builder.Build(to_underlying(SystemColumnIds::kLivenessColumn)));
           return Status::OK();

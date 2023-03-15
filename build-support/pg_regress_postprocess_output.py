@@ -39,9 +39,9 @@ def main():
     lines = [line.rstrip() for line in lines]
 
     mask_uuid4s = r"([0-9A-Fa-f]{8})-([0-9A-Fa-f]{4})-4([0-9A-Fa-f]{3})-([89ABab][0-9A-Fa-f]{3})-([0-9A-Fa-f]{12})"
-    mask_transaction_timestamps = r"Value write after transaction start:\s+{ days:\s+(\d+)\s+time:\s+(\d+):(\d+):(\d+).(\d+) } >= { days:\s+(\d+)\s+time:\s+(\d+):(\d+):(\d+).(\d+) }.*kConflict"
+    mask_conflict_timestamps = r"Value write after transaction start:\s+{ days:\s+(\d+)\s+time:\s+(\d+):(\d+):(\d+).(\d+) } >= { days:\s+(\d+)\s+time:\s+(\d+):(\d+):(\d+).(\d+) }.*kConflict"
 
-    def mask_groups(match):
+    def mask_regex_matches(match):
         chars = list(match.string)
         for i, _ in enumerate(match.groups()):
             start, end = match.span(i+1)
@@ -55,11 +55,11 @@ def main():
         masked_lines = []
         for line in lines:
             for regex in regex_list:
-                line = re.sub(regex, mask_groups, line)
+                line = re.sub(regex, mask_regex_matches, line)
             masked_lines.append(line)
         return masked_lines
 
-    lines = mask_lines(lines, mask_uuid4s, mask_transaction_timestamps)
+    lines = mask_lines(lines, mask_uuid4s, mask_conflict_timestamps)
 
     result_lines = []
     i = 0
