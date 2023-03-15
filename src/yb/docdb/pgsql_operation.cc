@@ -525,11 +525,27 @@ Result<HybridTime> PgsqlWriteOperation::FindOldestOverwrittenTimestamp(
   return result;
 }
 
+// TODO: This was extracted from GetDocPaths() as part of a minor refactor...
+//       does this need to call IsExpression()? Why did the original call not check that?
 bool PgsqlWriteOperation::HasExpression() const {
-  return std::any_of(
-      request_.column_new_values().begin(),
-      request_.column_new_values().end(),
-      [](const auto& column_value) { return column_value.expr().has_value(); });
+  switch (request_.stmt_type()) {
+    case PgsqlWriteRequestPB::PGSQL_INSERT: FALLTHROUGH_INTENDED;
+    case PgsqlWriteRequestPB::PGSQL_UPSERT:
+      return std::any_of(
+          request_.column_values().begin(),
+          request_.column_values().end(),
+          [](const auto& column_value) { return column_value.expr().has_value(); });
+    case PgsqlWriteRequestPB::PGSQL_UPDATE:
+      return std::any_of(
+          request_.column_new_values().begin(),
+          request_.column_new_values().end(),
+          [](const auto& column_value) { return column_value.expr().has_value(); });
+    case PgsqlWriteRequestPB::PGSQL_DELETE: FALLTHROUGH_INTENDED;
+    case PgsqlWriteRequestPB::PGSQL_TRUNCATE_COLOCATED: FALLTHROUGH_INTENDED;
+    case PgsqlWriteRequestPB::PGSQL_FETCH_SEQUENCE:
+      return false;
+  }
+  FATAL_INVALID_ENUM_VALUE(PgsqlWriteRequestPB_PgsqlStmtType, request_.stmt_type());
 }
 
 Status PgsqlWriteOperation::Apply(const DocOperationApplyData& data) {
