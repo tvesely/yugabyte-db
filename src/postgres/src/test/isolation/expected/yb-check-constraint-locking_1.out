@@ -1057,7 +1057,7 @@ step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
 step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1; <waiting ...>
 step s1_commit: COMMIT;
 step s2_update1: <... completed>
-error in steps s1_commit s2_update1: ERROR:  Value write after transaction start: { days: ***** time: **:**:**.****** } >= { days: ***** time: **:**:**.****** }: kConflict
+error in steps s1_commit s2_update1: ERROR:  could not serialize access due to concurrent update
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
 product_id     date_added     name           price          discounted_pricedate_expires
@@ -1077,7 +1077,7 @@ step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
 step s2_update2: UPDATE products SET discounted_price = 5 WHERE product_id = 1; <waiting ...>
 step s1_commit: COMMIT;
 step s2_update2: <... completed>
-error in steps s1_commit s2_update2: ERROR:  Value write after transaction start: { days: ***** time: **:**:**.****** } >= { days: ***** time: **:**:**.****** }: kConflict
+error in steps s1_commit s2_update2: ERROR:  could not serialize access due to concurrent update
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
 product_id     date_added     name           price          discounted_pricedate_expires
@@ -1097,7 +1097,7 @@ step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
 step s2_update3: UPDATE products SET name = 'pork' WHERE product_id = 1; <waiting ...>
 step s1_commit: COMMIT;
 step s2_update3: <... completed>
-error in steps s1_commit s2_update3: ERROR:  Value write after transaction start: { days: ***** time: **:**:**.****** } >= { days: ***** time: **:**:**.****** }: kConflict
+error in steps s1_commit s2_update3: ERROR:  could not serialize access due to concurrent update
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
 product_id     date_added     name           price          discounted_pricedate_expires
@@ -1117,7 +1117,7 @@ step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
 step s2_update4: UPDATE products SET product_id = 12 WHERE product_id = 1; <waiting ...>
 step s1_commit: COMMIT;
 step s2_update4: <... completed>
-error in steps s1_commit s2_update4: ERROR:  [Operation failed. Try again (yb/docdb/conflict_resolution.cc:800): Value write after transaction start: { days: ***** time: **:**:**.****** } >= { days: ***** time: **:**:**.****** }: kConflict (transaction error 3)]
+error in steps s1_commit s2_update4: ERROR:  could not serialize access due to concurrent update
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
 product_id     date_added     name           price          discounted_pricedate_expires
@@ -1137,7 +1137,7 @@ step s1_update2: UPDATE products SET discounted_price = 4 WHERE product_id = 1;
 step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1; <waiting ...>
 step s1_commit: COMMIT;
 step s2_update1: <... completed>
-error in steps s1_commit s2_update1: ERROR:  Value write after transaction start: { days: ***** time: **:**:**.****** } >= { days: ***** time: **:**:**.****** }: kConflict
+error in steps s1_commit s2_update1: ERROR:  could not serialize access due to concurrent update
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
 product_id     date_added     name           price          discounted_pricedate_expires
@@ -1157,7 +1157,7 @@ step s1_update2: UPDATE products SET discounted_price = 4 WHERE product_id = 1;
 step s2_update2: UPDATE products SET discounted_price = 5 WHERE product_id = 1; <waiting ...>
 step s1_commit: COMMIT;
 step s2_update2: <... completed>
-error in steps s1_commit s2_update2: ERROR:  Value write after transaction start: { days: ***** time: **:**:**.****** } >= { days: ***** time: **:**:**.****** }: kConflict
+error in steps s1_commit s2_update2: ERROR:  could not serialize access due to concurrent update
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
 product_id     date_added     name           price          discounted_pricedate_expires
@@ -1177,7 +1177,7 @@ step s1_update2: UPDATE products SET discounted_price = 4 WHERE product_id = 1;
 step s2_update3: UPDATE products SET name = 'pork' WHERE product_id = 1; <waiting ...>
 step s1_commit: COMMIT;
 step s2_update3: <... completed>
-error in steps s1_commit s2_update3: ERROR:  Value write after transaction start: { days: ***** time: **:**:**.****** } >= { days: ***** time: **:**:**.****** }: kConflict
+error in steps s1_commit s2_update3: ERROR:  could not serialize access due to concurrent update
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
 product_id     date_added     name           price          discounted_pricedate_expires
@@ -1197,7 +1197,7 @@ step s1_update2: UPDATE products SET discounted_price = 4 WHERE product_id = 1;
 step s2_update4: UPDATE products SET product_id = 12 WHERE product_id = 1; <waiting ...>
 step s1_commit: COMMIT;
 step s2_update4: <... completed>
-error in steps s1_commit s2_update4: ERROR:  [Operation failed. Try again (yb/docdb/conflict_resolution.cc:800): Value write after transaction start: { days: ***** time: **:**:**.****** } >= { days: ***** time: **:**:**.****** }: kConflict (transaction error 3)]
+error in steps s1_commit s2_update4: ERROR:  could not serialize access due to concurrent update
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
 product_id     date_added     name           price          discounted_pricedate_expires
@@ -1217,7 +1217,7 @@ step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
 step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1; <waiting ...>
 step s1_commit: COMMIT;
 step s2_update1: <... completed>
-error in steps s1_commit s2_update1: ERROR:  Value write after transaction start: { days: ***** time: **:**:**.****** } >= { days: ***** time: **:**:**.****** }: kConflict
+error in steps s1_commit s2_update1: ERROR:  could not serialize access due to concurrent update
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
 product_id     date_added     name           price          discounted_pricedate_expires
@@ -1237,7 +1237,7 @@ step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
 step s2_update2: UPDATE products SET discounted_price = 5 WHERE product_id = 1; <waiting ...>
 step s1_commit: COMMIT;
 step s2_update2: <... completed>
-error in steps s1_commit s2_update2: ERROR:  Value write after transaction start: { days: ***** time: **:**:**.****** } >= { days: ***** time: **:**:**.****** }: kConflict
+error in steps s1_commit s2_update2: ERROR:  could not serialize access due to concurrent update
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
 product_id     date_added     name           price          discounted_pricedate_expires
@@ -1257,7 +1257,7 @@ step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
 step s2_update3: UPDATE products SET name = 'pork' WHERE product_id = 1; <waiting ...>
 step s1_commit: COMMIT;
 step s2_update3: <... completed>
-error in steps s1_commit s2_update3: ERROR:  Value write after transaction start: { days: ***** time: **:**:**.****** } >= { days: ***** time: **:**:**.****** }: kConflict
+error in steps s1_commit s2_update3: ERROR:  could not serialize access due to concurrent update
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
 product_id     date_added     name           price          discounted_pricedate_expires
@@ -1277,7 +1277,7 @@ step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
 step s2_update4: UPDATE products SET product_id = 12 WHERE product_id = 1; <waiting ...>
 step s1_commit: COMMIT;
 step s2_update4: <... completed>
-error in steps s1_commit s2_update4: ERROR:  [Operation failed. Try again (yb/docdb/conflict_resolution.cc:800): Value write after transaction start: { days: ***** time: **:**:**.****** } >= { days: ***** time: **:**:**.****** }: kConflict (transaction error 3)]
+error in steps s1_commit s2_update4: ERROR:  could not serialize access due to concurrent update
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
 product_id     date_added     name           price          discounted_pricedate_expires
@@ -1297,7 +1297,7 @@ step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
 step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1; <waiting ...>
 step s1_commit: COMMIT;
 step s2_update1: <... completed>
-error in steps s1_commit s2_update1: ERROR:  Value write after transaction start: { days: ***** time: **:**:**.****** } >= { days: ***** time: **:**:**.****** }: kConflict
+error in steps s1_commit s2_update1: ERROR:  could not serialize access due to concurrent update
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
 product_id     date_added     name           price          discounted_pricedate_expires
@@ -1317,7 +1317,7 @@ step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
 step s2_update2: UPDATE products SET discounted_price = 5 WHERE product_id = 1; <waiting ...>
 step s1_commit: COMMIT;
 step s2_update2: <... completed>
-error in steps s1_commit s2_update2: ERROR:  Value write after transaction start: { days: ***** time: **:**:**.****** } >= { days: ***** time: **:**:**.****** }: kConflict
+error in steps s1_commit s2_update2: ERROR:  could not serialize access due to concurrent update
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
 product_id     date_added     name           price          discounted_pricedate_expires
@@ -1337,7 +1337,7 @@ step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
 step s2_update3: UPDATE products SET name = 'pork' WHERE product_id = 1; <waiting ...>
 step s1_commit: COMMIT;
 step s2_update3: <... completed>
-error in steps s1_commit s2_update3: ERROR:  Value write after transaction start: { days: ***** time: **:**:**.****** } >= { days: ***** time: **:**:**.****** }: kConflict
+error in steps s1_commit s2_update3: ERROR:  could not serialize access due to concurrent update
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
 product_id     date_added     name           price          discounted_pricedate_expires
@@ -1357,7 +1357,7 @@ step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
 step s2_update4: UPDATE products SET product_id = 12 WHERE product_id = 1; <waiting ...>
 step s1_commit: COMMIT;
 step s2_update4: <... completed>
-error in steps s1_commit s2_update4: ERROR:  [Operation failed. Try again (yb/docdb/conflict_resolution.cc:800): Value write after transaction start: { days: ***** time: **:**:**.****** } >= { days: ***** time: **:**:**.****** }: kConflict (transaction error 3)]
+error in steps s1_commit s2_update4: ERROR:  could not serialize access due to concurrent update
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
 product_id     date_added     name           price          discounted_pricedate_expires
@@ -1377,7 +1377,7 @@ step s1_update5: UPDATE products SET date_added = '2022-06-01 01:00:00' WHERE pr
 step s2_update5: UPDATE products SET date_added = '2022-06-01 02:00:00' WHERE product_id = 1; <waiting ...>
 step s1_commit: COMMIT;
 step s2_update5: <... completed>
-error in steps s1_commit s2_update5: ERROR:  [Operation failed. Try again (yb/docdb/conflict_resolution.cc:800): Value write after transaction start: { days: ***** time: **:**:**.****** } >= { days: ***** time: **:**:**.****** }: kConflict (transaction error 3)]
+error in steps s1_commit s2_update5: ERROR:  could not serialize access due to concurrent update
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
 product_id     date_added     name           price          discounted_pricedate_expires
@@ -1397,7 +1397,7 @@ step s1_update6: UPDATE products SET date_expires = '2022-05-01 01:00:00' WHERE 
 step s2_update6: UPDATE products SET date_expires = '2022-05-01 02:00:00' WHERE product_id = 1; <waiting ...>
 step s1_commit: COMMIT;
 step s2_update6: <... completed>
-error in steps s1_commit s2_update6: ERROR:  Value write after transaction start: { days: ***** time: **:**:**.****** } >= { days: ***** time: **:**:**.****** }: kConflict
+error in steps s1_commit s2_update6: ERROR:  could not serialize access due to concurrent update
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
 product_id     date_added     name           price          discounted_pricedate_expires
@@ -1417,7 +1417,7 @@ step s1_update5: UPDATE products SET date_added = '2022-06-01 01:00:00' WHERE pr
 step s2_update6: UPDATE products SET date_expires = '2022-05-01 02:00:00' WHERE product_id = 1; <waiting ...>
 step s1_commit: COMMIT;
 step s2_update6: <... completed>
-error in steps s1_commit s2_update6: ERROR:  Value write after transaction start: { days: ***** time: **:**:**.****** } >= { days: ***** time: **:**:**.****** }: kConflict
+error in steps s1_commit s2_update6: ERROR:  could not serialize access due to concurrent update
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
 product_id     date_added     name           price          discounted_pricedate_expires
@@ -1437,7 +1437,7 @@ step s1_update6: UPDATE products SET date_expires = '2022-05-01 01:00:00' WHERE 
 step s2_update5: UPDATE products SET date_added = '2022-06-01 02:00:00' WHERE product_id = 1; <waiting ...>
 step s1_commit: COMMIT;
 step s2_update5: <... completed>
-error in steps s1_commit s2_update5: ERROR:  [Operation failed. Try again (yb/docdb/conflict_resolution.cc:800): Value write after transaction start: { days: ***** time: **:**:**.****** } >= { days: ***** time: **:**:**.****** }: kConflict (transaction error 3)]
+error in steps s1_commit s2_update5: ERROR:  could not serialize access due to concurrent update
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
 product_id     date_added     name           price          discounted_pricedate_expires
@@ -1460,7 +1460,7 @@ step s2_insert_on_conflict1:
  <waiting ...>
 step s1_commit: COMMIT;
 step s2_insert_on_conflict1: <... completed>
-error in steps s1_commit s2_insert_on_conflict1: ERROR:  Value write after transaction start: { days: ***** time: **:**:**.****** } >= { days: ***** time: **:**:**.****** }: kConflict
+error in steps s1_commit s2_insert_on_conflict1: ERROR:  could not serialize access due to concurrent update
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
 product_id     date_added     name           price          discounted_pricedate_expires
@@ -1483,7 +1483,7 @@ step s2_insert_on_conflict2:
  <waiting ...>
 step s1_commit: COMMIT;
 step s2_insert_on_conflict2: <... completed>
-error in steps s1_commit s2_insert_on_conflict2: ERROR:  Value write after transaction start: { days: ***** time: **:**:**.****** } >= { days: ***** time: **:**:**.****** }: kConflict
+error in steps s1_commit s2_insert_on_conflict2: ERROR:  could not serialize access due to concurrent update
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
 product_id     date_added     name           price          discounted_pricedate_expires
@@ -1506,7 +1506,7 @@ step s2_insert_on_conflict3:
  <waiting ...>
 step s1_commit: COMMIT;
 step s2_insert_on_conflict3: <... completed>
-error in steps s1_commit s2_insert_on_conflict3: ERROR:  [Operation failed. Try again (yb/docdb/conflict_resolution.cc:800): Value write after transaction start: { days: ***** time: **:**:**.****** } >= { days: ***** time: **:**:**.****** }: kConflict (transaction error 3)]
+error in steps s1_commit s2_insert_on_conflict3: ERROR:  could not serialize access due to concurrent update
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
 product_id     date_added     name           price          discounted_pricedate_expires
@@ -1529,7 +1529,7 @@ step s1_insert_on_conflict1:
 step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1; <waiting ...>
 step s1_commit: COMMIT;
 step s2_update1: <... completed>
-error in steps s1_commit s2_update1: ERROR:  Value write after transaction start: { days: ***** time: **:**:**.****** } >= { days: ***** time: **:**:**.****** }: kConflict
+error in steps s1_commit s2_update1: ERROR:  could not serialize access due to concurrent update
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
 product_id     date_added     name           price          discounted_pricedate_expires
@@ -1552,7 +1552,7 @@ step s1_insert_on_conflict2:
 step s2_update5: UPDATE products SET date_added = '2022-06-01 02:00:00' WHERE product_id = 1; <waiting ...>
 step s1_commit: COMMIT;
 step s2_update5: <... completed>
-error in steps s1_commit s2_update5: ERROR:  [Operation failed. Try again (yb/docdb/conflict_resolution.cc:800): Value write after transaction start: { days: ***** time: **:**:**.****** } >= { days: ***** time: **:**:**.****** }: kConflict (transaction error 3)]
+error in steps s1_commit s2_update5: ERROR:  could not serialize access due to concurrent update
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
 product_id     date_added     name           price          discounted_pricedate_expires
@@ -1575,7 +1575,7 @@ step s1_insert_on_conflict3:
 step s2_update6: UPDATE products SET date_expires = '2022-05-01 02:00:00' WHERE product_id = 1; <waiting ...>
 step s1_commit: COMMIT;
 step s2_update6: <... completed>
-error in steps s1_commit s2_update6: ERROR:  Value write after transaction start: { days: ***** time: **:**:**.****** } >= { days: ***** time: **:**:**.****** }: kConflict
+error in steps s1_commit s2_update6: ERROR:  could not serialize access due to concurrent update
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
 product_id     date_added     name           price          discounted_pricedate_expires

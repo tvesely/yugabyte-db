@@ -1055,7 +1055,7 @@ product_id     date_added     name           price          discounted_pricedate
 1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
 step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
 step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1;
-ERROR:  ********-****-4***-****-************ conflicts with higher priority transaction: ********-****-4***-****-************
+ERROR:  could not serialize access due to concurrent update
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
@@ -1074,7 +1074,7 @@ product_id     date_added     name           price          discounted_pricedate
 1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
 step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
 step s2_update2: UPDATE products SET discounted_price = 5 WHERE product_id = 1;
-ERROR:  ********-****-4***-****-************ conflicts with higher priority transaction: ********-****-4***-****-************
+ERROR:  could not serialize access due to concurrent update
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
@@ -1093,7 +1093,7 @@ product_id     date_added     name           price          discounted_pricedate
 1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
 step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
 step s2_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
-ERROR:  ********-****-4***-****-************ conflicts with higher priority transaction: ********-****-4***-****-************
+ERROR:  could not serialize access due to concurrent update
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
@@ -1112,7 +1112,7 @@ product_id     date_added     name           price          discounted_pricedate
 1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
 step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
 step s2_update4: UPDATE products SET product_id = 12 WHERE product_id = 1;
-ERROR:  [Operation failed. Try again (yb/docdb/conflict_resolution.cc:108): ********-****-4***-****-************ conflicts with higher priority transaction: ********-****-4***-****-************ (transaction error 3)]
+ERROR:  could not serialize access due to concurrent update
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
@@ -1131,7 +1131,7 @@ product_id     date_added     name           price          discounted_pricedate
 1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
 step s1_update2: UPDATE products SET discounted_price = 4 WHERE product_id = 1;
 step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1;
-ERROR:  ********-****-4***-****-************ conflicts with higher priority transaction: ********-****-4***-****-************
+ERROR:  could not serialize access due to concurrent update
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
@@ -1150,7 +1150,7 @@ product_id     date_added     name           price          discounted_pricedate
 1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
 step s1_update2: UPDATE products SET discounted_price = 4 WHERE product_id = 1;
 step s2_update2: UPDATE products SET discounted_price = 5 WHERE product_id = 1;
-ERROR:  ********-****-4***-****-************ conflicts with higher priority transaction: ********-****-4***-****-************
+ERROR:  could not serialize access due to concurrent update
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
@@ -1169,7 +1169,7 @@ product_id     date_added     name           price          discounted_pricedate
 1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
 step s1_update2: UPDATE products SET discounted_price = 4 WHERE product_id = 1;
 step s2_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
-ERROR:  ********-****-4***-****-************ conflicts with higher priority transaction: ********-****-4***-****-************
+ERROR:  could not serialize access due to concurrent update
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
@@ -1188,7 +1188,7 @@ product_id     date_added     name           price          discounted_pricedate
 1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
 step s1_update2: UPDATE products SET discounted_price = 4 WHERE product_id = 1;
 step s2_update4: UPDATE products SET product_id = 12 WHERE product_id = 1;
-ERROR:  [Operation failed. Try again (yb/docdb/conflict_resolution.cc:108): ********-****-4***-****-************ conflicts with higher priority transaction: ********-****-4***-****-************ (transaction error 3)]
+ERROR:  could not serialize access due to concurrent update
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
@@ -1207,7 +1207,7 @@ product_id     date_added     name           price          discounted_pricedate
 1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
 step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
 step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1;
-ERROR:  ********-****-4***-****-************ conflicts with higher priority transaction: ********-****-4***-****-************
+ERROR:  could not serialize access due to concurrent update
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
@@ -1226,7 +1226,7 @@ product_id     date_added     name           price          discounted_pricedate
 1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
 step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
 step s2_update2: UPDATE products SET discounted_price = 5 WHERE product_id = 1;
-ERROR:  ********-****-4***-****-************ conflicts with higher priority transaction: ********-****-4***-****-************
+ERROR:  could not serialize access due to concurrent update
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
@@ -1245,7 +1245,7 @@ product_id     date_added     name           price          discounted_pricedate
 1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
 step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
 step s2_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
-ERROR:  ********-****-4***-****-************ conflicts with higher priority transaction: ********-****-4***-****-************
+ERROR:  could not serialize access due to concurrent update
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
@@ -1264,7 +1264,7 @@ product_id     date_added     name           price          discounted_pricedate
 1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
 step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
 step s2_update4: UPDATE products SET product_id = 12 WHERE product_id = 1;
-ERROR:  [Operation failed. Try again (yb/docdb/conflict_resolution.cc:108): ********-****-4***-****-************ conflicts with higher priority transaction: ********-****-4***-****-************ (transaction error 3)]
+ERROR:  could not serialize access due to concurrent update
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
@@ -1283,7 +1283,7 @@ product_id     date_added     name           price          discounted_pricedate
 1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
 step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
 step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1;
-ERROR:  ********-****-4***-****-************ conflicts with higher priority transaction: ********-****-4***-****-************
+ERROR:  could not serialize access due to concurrent update
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
@@ -1302,7 +1302,7 @@ product_id     date_added     name           price          discounted_pricedate
 1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
 step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
 step s2_update2: UPDATE products SET discounted_price = 5 WHERE product_id = 1;
-ERROR:  ********-****-4***-****-************ conflicts with higher priority transaction: ********-****-4***-****-************
+ERROR:  could not serialize access due to concurrent update
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
@@ -1321,7 +1321,7 @@ product_id     date_added     name           price          discounted_pricedate
 1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
 step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
 step s2_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
-ERROR:  ********-****-4***-****-************ conflicts with higher priority transaction: ********-****-4***-****-************
+ERROR:  could not serialize access due to concurrent update
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
@@ -1340,7 +1340,7 @@ product_id     date_added     name           price          discounted_pricedate
 1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
 step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
 step s2_update4: UPDATE products SET product_id = 12 WHERE product_id = 1;
-ERROR:  [Operation failed. Try again (yb/docdb/conflict_resolution.cc:108): ********-****-4***-****-************ conflicts with higher priority transaction: ********-****-4***-****-************ (transaction error 3)]
+ERROR:  could not serialize access due to concurrent update
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
@@ -1359,7 +1359,7 @@ product_id     date_added     name           price          discounted_pricedate
 1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
 step s1_update5: UPDATE products SET date_added = '2022-06-01 01:00:00' WHERE product_id = 1;
 step s2_update5: UPDATE products SET date_added = '2022-06-01 02:00:00' WHERE product_id = 1;
-ERROR:  [Operation failed. Try again (yb/docdb/conflict_resolution.cc:108): ********-****-4***-****-************ conflicts with higher priority transaction: ********-****-4***-****-************ (transaction error 3)]
+ERROR:  could not serialize access due to concurrent update
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
@@ -1378,7 +1378,7 @@ product_id     date_added     name           price          discounted_pricedate
 1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
 step s1_update6: UPDATE products SET date_expires = '2022-05-01 01:00:00' WHERE product_id = 1;
 step s2_update6: UPDATE products SET date_expires = '2022-05-01 02:00:00' WHERE product_id = 1;
-ERROR:  ********-****-4***-****-************ conflicts with higher priority transaction: ********-****-4***-****-************
+ERROR:  could not serialize access due to concurrent update
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
@@ -1397,7 +1397,7 @@ product_id     date_added     name           price          discounted_pricedate
 1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
 step s1_update5: UPDATE products SET date_added = '2022-06-01 01:00:00' WHERE product_id = 1;
 step s2_update6: UPDATE products SET date_expires = '2022-05-01 02:00:00' WHERE product_id = 1;
-ERROR:  ********-****-4***-****-************ conflicts with higher priority transaction: ********-****-4***-****-************
+ERROR:  could not serialize access due to concurrent update
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
@@ -1416,7 +1416,7 @@ product_id     date_added     name           price          discounted_pricedate
 1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
 step s1_update6: UPDATE products SET date_expires = '2022-05-01 01:00:00' WHERE product_id = 1;
 step s2_update5: UPDATE products SET date_added = '2022-06-01 02:00:00' WHERE product_id = 1;
-ERROR:  [Operation failed. Try again (yb/docdb/conflict_resolution.cc:108): ********-****-4***-****-************ conflicts with higher priority transaction: ********-****-4***-****-************ (transaction error 3)]
+ERROR:  could not serialize access due to concurrent update
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
@@ -1438,7 +1438,7 @@ step s2_insert_on_conflict1:
     INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
     ON CONFLICT(product_id, date_added) DO UPDATE SET discounted_price = 5;
 
-ERROR:  ********-****-4***-****-************ conflicts with higher priority transaction: ********-****-4***-****-************
+ERROR:  could not serialize access due to concurrent update
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
@@ -1460,7 +1460,7 @@ step s2_insert_on_conflict2:
     INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
     ON CONFLICT(product_id, date_added) DO UPDATE SET date_expires = '2022-05-01 02:00:00';
 
-ERROR:  ********-****-4***-****-************ conflicts with higher priority transaction: ********-****-4***-****-************
+ERROR:  could not serialize access due to concurrent update
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
@@ -1482,7 +1482,7 @@ step s2_insert_on_conflict3:
     INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
     ON CONFLICT(product_id, date_added) DO UPDATE SET date_added = '2022-05-01 02:00:00';
 
-ERROR:  [Operation failed. Try again (yb/docdb/conflict_resolution.cc:108): ********-****-4***-****-************ conflicts with higher priority transaction: ********-****-4***-****-************ (transaction error 3)]
+ERROR:  could not serialize access due to concurrent update
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
@@ -1504,7 +1504,7 @@ step s1_insert_on_conflict1:
     ON CONFLICT(product_id, date_added) DO UPDATE SET discounted_price = 5;
 
 step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1;
-ERROR:  ********-****-4***-****-************ conflicts with higher priority transaction: ********-****-4***-****-************
+ERROR:  could not serialize access due to concurrent update
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
@@ -1526,7 +1526,7 @@ step s1_insert_on_conflict2:
     ON CONFLICT(product_id, date_added) DO UPDATE SET date_expires = '2022-05-01 02:00:00';
 
 step s2_update5: UPDATE products SET date_added = '2022-06-01 02:00:00' WHERE product_id = 1;
-ERROR:  [Operation failed. Try again (yb/docdb/conflict_resolution.cc:108): ********-****-4***-****-************ conflicts with higher priority transaction: ********-****-4***-****-************ (transaction error 3)]
+ERROR:  could not serialize access due to concurrent update
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
@@ -1548,7 +1548,7 @@ step s1_insert_on_conflict3:
     ON CONFLICT(product_id, date_added) DO UPDATE SET date_added = '2022-05-01 02:00:00';
 
 step s2_update6: UPDATE products SET date_expires = '2022-05-01 02:00:00' WHERE product_id = 1;
-ERROR:  ********-****-4***-****-************ conflicts with higher priority transaction: ********-****-4***-****-************
+ERROR:  could not serialize access due to concurrent update
 step s1_commit: COMMIT;
 step s2_commit: COMMIT;
 step s1_select: SELECT * FROM products;
