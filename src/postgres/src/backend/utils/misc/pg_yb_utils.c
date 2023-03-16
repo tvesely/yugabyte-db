@@ -510,14 +510,46 @@ FetchUniqueConstraintName(Oid relation_id)
  */
 void
 GetStatusMsgAndArgumentsByCode(const uint32_t pg_err_code, YBCStatus s,
-							   const char **msg, size_t *nargs, const char ***args)
+							   const char **msg_buf, size_t *msg_nargs,
+							   const char ***msg_args, const char **detail_buf,
+							   size_t *detail_nargs, const char ***detail_args)
 {
-	if (pg_err_code == ERRCODE_UNIQUE_VIOLATION)
+	const char	*status_msg = YBCMessageAsCString(s);
+	size_t		 status_nargs;
+	const char **status_args = YBCStatusArguments(s, &status_nargs);
+	uint16_t	 txn_error = YBCStatusTransactionError(s);
+
+
+	// Initialize message and detail buffers with default values
+	*msg_buf = status_msg;
+	*msg_nargs = status_nargs;
+	*msg_args = status_args;
+	*detail_buf = NULL;
+	*detail_nargs = 0;
+	*detail_args = NULL;
+
+	switch(pg_err_code)
 	{
-		*msg = "duplicate key value violates unique constraint \"%s\"";
-		*nargs = 1;
-		*args = (const char **) palloc(sizeof(const char **));
-		*args[0] = FetchUniqueConstraintName(YBCStatusRelationOid(s));
+		case ERRCODE_T_R_SERIALIZATION_FAILURE:
+			if(YBCIsTxnConflictError(txn_error))
+			{
+				*msg_buf = "could not serialize access due to concurrent update";
+				*msg_nargs = 0;
+				*msg_args = NULL;
+
+				*detail_buf = status_msg;
+				*detail_nargs = status_nargs;
+				*detail_args = status_args;
+			}
+			break;
+		case ERRCODE_UNIQUE_VIOLATION:
+			*msg_buf = "duplicate key value violates unique constraint \"%s\"";
+			*msg_nargs = 1;
+			*msg_args = (const char **) palloc(sizeof(const char *));
+			(*msg_args)[0] = FetchUniqueConstraintName(YBCStatusRelationOid(s));
+			break;
+		default:
+			break;
 	}
 }
 
