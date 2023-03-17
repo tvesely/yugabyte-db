@@ -34,7 +34,7 @@ public class TestPgWithoutWaitQueuesIsolationRegress extends BasePgSQLTest {
 
   @Override
   public int getTestMethodTimeoutSec() {
-    return 180;
+    return 600;
   }
 
   @Test

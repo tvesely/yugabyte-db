@@ -1,1 +1,2 @@
 test: yb-stat-activity-waitevent-statement-retry
+test: yb-check-constraint-locking

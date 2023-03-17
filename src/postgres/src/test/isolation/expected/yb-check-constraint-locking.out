@@ -1,0 +1,2601 @@
+Parsed test spec with 2 sessions
+
+starting permutation: s1_priority s2_priority s1_select s1_serializable_txn s2_serializable_txn s1_update1 s2_update1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s2_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
+step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update1: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           2              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_select s1_serializable_txn s2_serializable_txn s1_update1 s2_update2 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s2_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
+step s2_update2: UPDATE products SET discounted_price = 5 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update2: <... completed>
+error in steps s1_commit s2_update2: ERROR:  new row for relation "products" violates check constraint "products_check1"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           3              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_select s1_serializable_txn s2_serializable_txn s1_update1 s2_update3 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s2_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
+step s2_update3: UPDATE products SET name = 'pork' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update3: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           3              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_select s1_serializable_txn s2_serializable_txn s1_update1 s2_update4 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s2_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
+step s2_update4: UPDATE products SET product_id = 12 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update4: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+12             Sat Jan 01 05:00:00 2022oats           3              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_select s1_serializable_txn s2_serializable_txn s1_update2 s2_update1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s2_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s1_update2: UPDATE products SET discounted_price = 4 WHERE product_id = 1;
+step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update1: <... completed>
+error in steps s1_commit s2_update1: ERROR:  new row for relation "products" violates check constraint "products_check1"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             4              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_select s1_serializable_txn s2_serializable_txn s1_update2 s2_update2 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s2_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s1_update2: UPDATE products SET discounted_price = 4 WHERE product_id = 1;
+step s2_update2: UPDATE products SET discounted_price = 5 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update2: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             5              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_select s1_serializable_txn s2_serializable_txn s1_update2 s2_update3 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s2_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s1_update2: UPDATE products SET discounted_price = 4 WHERE product_id = 1;
+step s2_update3: UPDATE products SET name = 'pork' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update3: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           10             4              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_select s1_serializable_txn s2_serializable_txn s1_update2 s2_update4 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s2_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s1_update2: UPDATE products SET discounted_price = 4 WHERE product_id = 1;
+step s2_update4: UPDATE products SET product_id = 12 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update4: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+12             Sat Jan 01 05:00:00 2022oats           10             4              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_select s1_serializable_txn s2_serializable_txn s1_update3 s2_update1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s2_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update1: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           2              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_select s1_serializable_txn s2_serializable_txn s1_update3 s2_update2 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s2_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update2: UPDATE products SET discounted_price = 5 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update2: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           10             5              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_select s1_serializable_txn s2_serializable_txn s1_update3 s2_update3 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s2_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update3: UPDATE products SET name = 'pork' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update3: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_select s1_serializable_txn s2_serializable_txn s1_update3 s2_update4 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s2_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update4: UPDATE products SET product_id = 12 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update4: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+12             Sat Jan 01 05:00:00 2022pork           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_select s1_serializable_txn s2_serializable_txn s1_update3 s2_update1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s2_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update1: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           2              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_select s1_serializable_txn s2_serializable_txn s1_update3 s2_update2 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s2_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update2: UPDATE products SET discounted_price = 5 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update2: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           10             5              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_select s1_serializable_txn s2_serializable_txn s1_update3 s2_update3 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s2_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update3: UPDATE products SET name = 'pork' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update3: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_select s1_serializable_txn s2_serializable_txn s1_update3 s2_update4 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s2_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update4: UPDATE products SET product_id = 12 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update4: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+12             Sat Jan 01 05:00:00 2022pork           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_select s1_serializable_txn s2_serializable_txn s1_update5 s2_update5 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s2_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s1_update5: UPDATE products SET date_added = '2022-06-01 01:00:00' WHERE product_id = 1;
+step s2_update5: UPDATE products SET date_added = '2022-06-01 02:00:00' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update5: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Wed Jun 01 02:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_select s1_serializable_txn s2_serializable_txn s1_update6 s2_update6 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s2_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s1_update6: UPDATE products SET date_expires = '2022-05-01 01:00:00' WHERE product_id = 1;
+step s2_update6: UPDATE products SET date_expires = '2022-05-01 02:00:00' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update6: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sun May 01 02:00:00 2022 PDT
+
+starting permutation: s1_priority s2_priority s1_select s1_serializable_txn s2_serializable_txn s1_update5 s2_update6 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s2_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s1_update5: UPDATE products SET date_added = '2022-06-01 01:00:00' WHERE product_id = 1;
+step s2_update6: UPDATE products SET date_expires = '2022-05-01 02:00:00' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update6: <... completed>
+error in steps s1_commit s2_update6: ERROR:  new row for relation "products" violates check constraint "products_check"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Wed Jun 01 01:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_select s1_serializable_txn s2_serializable_txn s1_update6 s2_update5 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s2_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s1_update6: UPDATE products SET date_expires = '2022-05-01 01:00:00' WHERE product_id = 1;
+step s2_update5: UPDATE products SET date_added = '2022-06-01 02:00:00' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update5: <... completed>
+error in steps s1_commit s2_update5: ERROR:  new row for relation "products" violates check constraint "products_check"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sun May 01 01:00:00 2022 PDT
+
+starting permutation: s1_priority s2_priority s1_select s1_serializable_txn s2_serializable_txn s1_update1 s2_insert_on_conflict1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s2_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
+step s2_insert_on_conflict1:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET discounted_price = 5;
+ <waiting ...>
+step s1_commit: COMMIT;
+step s2_insert_on_conflict1: <... completed>
+error in steps s1_commit s2_insert_on_conflict1: ERROR:  new row for relation "products" violates check constraint "products_check1"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           3              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_select s1_serializable_txn s2_serializable_txn s1_update5 s2_insert_on_conflict2 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s2_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s1_update5: UPDATE products SET date_added = '2022-06-01 01:00:00' WHERE product_id = 1;
+step s2_insert_on_conflict2:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET date_expires = '2022-05-01 02:00:00';
+ <waiting ...>
+step s1_commit: COMMIT;
+step s2_insert_on_conflict2: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022fish           11             2              Fri Dec 30 23:59:59 2022 PST
+1              Wed Jun 01 01:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_select s1_serializable_txn s2_serializable_txn s1_update6 s2_insert_on_conflict3 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s2_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s1_update6: UPDATE products SET date_expires = '2022-05-01 01:00:00' WHERE product_id = 1;
+step s2_insert_on_conflict3:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET date_added = '2022-05-01 02:00:00';
+ <waiting ...>
+step s1_commit: COMMIT;
+step s2_insert_on_conflict3: <... completed>
+error in steps s1_commit s2_insert_on_conflict3: ERROR:  new row for relation "products" violates check constraint "products_check"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sun May 01 01:00:00 2022 PDT
+
+starting permutation: s1_priority s2_priority s1_select s1_serializable_txn s2_serializable_txn s1_insert_on_conflict1 s2_update1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s2_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s1_insert_on_conflict1:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET discounted_price = 5;
+
+step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update1: <... completed>
+error in steps s1_commit s2_update1: ERROR:  new row for relation "products" violates check constraint "products_check1"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             5              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_select s1_serializable_txn s2_serializable_txn s1_insert_on_conflict2 s2_update5 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s2_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s1_insert_on_conflict2:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET date_expires = '2022-05-01 02:00:00';
+
+step s2_update5: UPDATE products SET date_added = '2022-06-01 02:00:00' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update5: <... completed>
+error in steps s1_commit s2_update5: ERROR:  new row for relation "products" violates check constraint "products_check"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sun May 01 02:00:00 2022 PDT
+
+starting permutation: s1_priority s2_priority s1_select s1_serializable_txn s2_serializable_txn s1_insert_on_conflict3 s2_update6 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s2_serializable_txn: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+step s1_insert_on_conflict3:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET date_added = '2022-05-01 02:00:00';
+
+step s2_update6: UPDATE products SET date_expires = '2022-05-01 02:00:00' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update6: <... completed>
+error in steps s1_commit s2_update6: ERROR:  new row for relation "products" violates check constraint "products_check"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sun May 01 02:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s1_select s2_repeatable_read_txn s1_update1 s2_update1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
+step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update1: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           2              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s1_select s2_repeatable_read_txn s1_update1 s2_update2 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
+step s2_update2: UPDATE products SET discounted_price = 5 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update2: <... completed>
+error in steps s1_commit s2_update2: ERROR:  new row for relation "products" violates check constraint "products_check1"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           3              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s1_select s2_repeatable_read_txn s1_update1 s2_update3 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
+step s2_update3: UPDATE products SET name = 'pork' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update3: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           3              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s1_select s2_repeatable_read_txn s1_update1 s2_update4 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
+step s2_update4: UPDATE products SET product_id = 12 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update4: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+12             Sat Jan 01 05:00:00 2022oats           3              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s1_select s2_repeatable_read_txn s1_update2 s2_update1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update2: UPDATE products SET discounted_price = 4 WHERE product_id = 1;
+step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update1: <... completed>
+error in steps s1_commit s2_update1: ERROR:  new row for relation "products" violates check constraint "products_check1"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             4              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s1_select s2_repeatable_read_txn s1_update2 s2_update2 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update2: UPDATE products SET discounted_price = 4 WHERE product_id = 1;
+step s2_update2: UPDATE products SET discounted_price = 5 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update2: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             5              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s1_select s2_repeatable_read_txn s1_update2 s2_update3 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update2: UPDATE products SET discounted_price = 4 WHERE product_id = 1;
+step s2_update3: UPDATE products SET name = 'pork' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update3: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           10             4              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s1_select s2_repeatable_read_txn s1_update2 s2_update4 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update2: UPDATE products SET discounted_price = 4 WHERE product_id = 1;
+step s2_update4: UPDATE products SET product_id = 12 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update4: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+12             Sat Jan 01 05:00:00 2022oats           10             4              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s1_select s2_repeatable_read_txn s1_update3 s2_update1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update1: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           2              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s1_select s2_repeatable_read_txn s1_update3 s2_update2 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update2: UPDATE products SET discounted_price = 5 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update2: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           10             5              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s1_select s2_repeatable_read_txn s1_update3 s2_update3 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update3: UPDATE products SET name = 'pork' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update3: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s1_select s2_repeatable_read_txn s1_update3 s2_update4 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update4: UPDATE products SET product_id = 12 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update4: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+12             Sat Jan 01 05:00:00 2022pork           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s1_select s2_repeatable_read_txn s1_update3 s2_update1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update1: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           2              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s1_select s2_repeatable_read_txn s1_update3 s2_update2 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update2: UPDATE products SET discounted_price = 5 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update2: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           10             5              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s1_select s2_repeatable_read_txn s1_update3 s2_update3 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update3: UPDATE products SET name = 'pork' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update3: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s1_select s2_repeatable_read_txn s1_update3 s2_update4 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update4: UPDATE products SET product_id = 12 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update4: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+12             Sat Jan 01 05:00:00 2022pork           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s1_select s2_repeatable_read_txn s1_update5 s2_update5 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update5: UPDATE products SET date_added = '2022-06-01 01:00:00' WHERE product_id = 1;
+step s2_update5: UPDATE products SET date_added = '2022-06-01 02:00:00' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update5: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Wed Jun 01 02:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s1_select s2_repeatable_read_txn s1_update6 s2_update6 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update6: UPDATE products SET date_expires = '2022-05-01 01:00:00' WHERE product_id = 1;
+step s2_update6: UPDATE products SET date_expires = '2022-05-01 02:00:00' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update6: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sun May 01 02:00:00 2022 PDT
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s1_select s2_repeatable_read_txn s1_update5 s2_update6 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update5: UPDATE products SET date_added = '2022-06-01 01:00:00' WHERE product_id = 1;
+step s2_update6: UPDATE products SET date_expires = '2022-05-01 02:00:00' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update6: <... completed>
+error in steps s1_commit s2_update6: ERROR:  new row for relation "products" violates check constraint "products_check"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Wed Jun 01 01:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s1_select s2_repeatable_read_txn s1_update6 s2_update5 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update6: UPDATE products SET date_expires = '2022-05-01 01:00:00' WHERE product_id = 1;
+step s2_update5: UPDATE products SET date_added = '2022-06-01 02:00:00' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update5: <... completed>
+error in steps s1_commit s2_update5: ERROR:  new row for relation "products" violates check constraint "products_check"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sun May 01 01:00:00 2022 PDT
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s1_select s2_repeatable_read_txn s1_update1 s2_insert_on_conflict1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
+step s2_insert_on_conflict1:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET discounted_price = 5;
+ <waiting ...>
+step s1_commit: COMMIT;
+step s2_insert_on_conflict1: <... completed>
+error in steps s1_commit s2_insert_on_conflict1: ERROR:  new row for relation "products" violates check constraint "products_check1"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           3              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s1_select s2_repeatable_read_txn s1_update5 s2_insert_on_conflict2 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update5: UPDATE products SET date_added = '2022-06-01 01:00:00' WHERE product_id = 1;
+step s2_insert_on_conflict2:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET date_expires = '2022-05-01 02:00:00';
+ <waiting ...>
+step s1_commit: COMMIT;
+step s2_insert_on_conflict2: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022fish           11             2              Fri Dec 30 23:59:59 2022 PST
+1              Wed Jun 01 01:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s1_select s2_repeatable_read_txn s1_update6 s2_insert_on_conflict3 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update6: UPDATE products SET date_expires = '2022-05-01 01:00:00' WHERE product_id = 1;
+step s2_insert_on_conflict3:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET date_added = '2022-05-01 02:00:00';
+ <waiting ...>
+step s1_commit: COMMIT;
+step s2_insert_on_conflict3: <... completed>
+error in steps s1_commit s2_insert_on_conflict3: ERROR:  new row for relation "products" violates check constraint "products_check"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sun May 01 01:00:00 2022 PDT
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s1_select s2_repeatable_read_txn s1_insert_on_conflict1 s2_update1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_insert_on_conflict1:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET discounted_price = 5;
+
+step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update1: <... completed>
+error in steps s1_commit s2_update1: ERROR:  new row for relation "products" violates check constraint "products_check1"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             5              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s1_select s2_repeatable_read_txn s1_insert_on_conflict2 s2_update5 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_insert_on_conflict2:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET date_expires = '2022-05-01 02:00:00';
+
+step s2_update5: UPDATE products SET date_added = '2022-06-01 02:00:00' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update5: <... completed>
+error in steps s1_commit s2_update5: ERROR:  new row for relation "products" violates check constraint "products_check"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sun May 01 02:00:00 2022 PDT
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s1_select s2_repeatable_read_txn s1_insert_on_conflict3 s2_update6 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_insert_on_conflict3:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET date_added = '2022-05-01 02:00:00';
+
+step s2_update6: UPDATE products SET date_expires = '2022-05-01 02:00:00' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update6: <... completed>
+error in steps s1_commit s2_update6: ERROR:  new row for relation "products" violates check constraint "products_check"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sun May 01 02:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s2_repeatable_read_txn s2_select s1_update1 s2_update1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
+step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1;
+ERROR:  could not serialize access due to concurrent update
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           3              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s2_repeatable_read_txn s2_select s1_update1 s2_update2 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
+step s2_update2: UPDATE products SET discounted_price = 5 WHERE product_id = 1;
+ERROR:  could not serialize access due to concurrent update
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           3              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s2_repeatable_read_txn s2_select s1_update1 s2_update3 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
+step s2_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+ERROR:  could not serialize access due to concurrent update
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           3              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s2_repeatable_read_txn s2_select s1_update1 s2_update4 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
+step s2_update4: UPDATE products SET product_id = 12 WHERE product_id = 1;
+ERROR:  could not serialize access due to concurrent update
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           3              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s2_repeatable_read_txn s2_select s1_update2 s2_update1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update2: UPDATE products SET discounted_price = 4 WHERE product_id = 1;
+step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1;
+ERROR:  could not serialize access due to concurrent update
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             4              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s2_repeatable_read_txn s2_select s1_update2 s2_update2 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update2: UPDATE products SET discounted_price = 4 WHERE product_id = 1;
+step s2_update2: UPDATE products SET discounted_price = 5 WHERE product_id = 1;
+ERROR:  could not serialize access due to concurrent update
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             4              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s2_repeatable_read_txn s2_select s1_update2 s2_update3 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update2: UPDATE products SET discounted_price = 4 WHERE product_id = 1;
+step s2_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+ERROR:  could not serialize access due to concurrent update
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             4              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s2_repeatable_read_txn s2_select s1_update2 s2_update4 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update2: UPDATE products SET discounted_price = 4 WHERE product_id = 1;
+step s2_update4: UPDATE products SET product_id = 12 WHERE product_id = 1;
+ERROR:  could not serialize access due to concurrent update
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             4              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s2_repeatable_read_txn s2_select s1_update3 s2_update1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1;
+ERROR:  could not serialize access due to concurrent update
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s2_repeatable_read_txn s2_select s1_update3 s2_update2 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update2: UPDATE products SET discounted_price = 5 WHERE product_id = 1;
+ERROR:  could not serialize access due to concurrent update
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s2_repeatable_read_txn s2_select s1_update3 s2_update3 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+ERROR:  could not serialize access due to concurrent update
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s2_repeatable_read_txn s2_select s1_update3 s2_update4 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update4: UPDATE products SET product_id = 12 WHERE product_id = 1;
+ERROR:  could not serialize access due to concurrent update
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s2_repeatable_read_txn s2_select s1_update3 s2_update1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1;
+ERROR:  could not serialize access due to concurrent update
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s2_repeatable_read_txn s2_select s1_update3 s2_update2 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update2: UPDATE products SET discounted_price = 5 WHERE product_id = 1;
+ERROR:  could not serialize access due to concurrent update
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s2_repeatable_read_txn s2_select s1_update3 s2_update3 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+ERROR:  could not serialize access due to concurrent update
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s2_repeatable_read_txn s2_select s1_update3 s2_update4 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update4: UPDATE products SET product_id = 12 WHERE product_id = 1;
+ERROR:  could not serialize access due to concurrent update
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s2_repeatable_read_txn s2_select s1_update5 s2_update5 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update5: UPDATE products SET date_added = '2022-06-01 01:00:00' WHERE product_id = 1;
+step s2_update5: UPDATE products SET date_added = '2022-06-01 02:00:00' WHERE product_id = 1;
+ERROR:  could not serialize access due to concurrent update
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Wed Jun 01 01:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s2_repeatable_read_txn s2_select s1_update6 s2_update6 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update6: UPDATE products SET date_expires = '2022-05-01 01:00:00' WHERE product_id = 1;
+step s2_update6: UPDATE products SET date_expires = '2022-05-01 02:00:00' WHERE product_id = 1;
+ERROR:  could not serialize access due to concurrent update
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sun May 01 01:00:00 2022 PDT
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s2_repeatable_read_txn s2_select s1_update5 s2_update6 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update5: UPDATE products SET date_added = '2022-06-01 01:00:00' WHERE product_id = 1;
+step s2_update6: UPDATE products SET date_expires = '2022-05-01 02:00:00' WHERE product_id = 1;
+ERROR:  could not serialize access due to concurrent update
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Wed Jun 01 01:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s2_repeatable_read_txn s2_select s1_update6 s2_update5 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update6: UPDATE products SET date_expires = '2022-05-01 01:00:00' WHERE product_id = 1;
+step s2_update5: UPDATE products SET date_added = '2022-06-01 02:00:00' WHERE product_id = 1;
+ERROR:  could not serialize access due to concurrent update
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sun May 01 01:00:00 2022 PDT
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s2_repeatable_read_txn s2_select s1_update1 s2_insert_on_conflict1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
+step s2_insert_on_conflict1:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET discounted_price = 5;
+
+ERROR:  could not serialize access due to concurrent update
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           3              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s2_repeatable_read_txn s2_select s1_update5 s2_insert_on_conflict2 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update5: UPDATE products SET date_added = '2022-06-01 01:00:00' WHERE product_id = 1;
+step s2_insert_on_conflict2:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET date_expires = '2022-05-01 02:00:00';
+
+ERROR:  could not serialize access due to concurrent update
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Wed Jun 01 01:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s2_repeatable_read_txn s2_select s1_update6 s2_insert_on_conflict3 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update6: UPDATE products SET date_expires = '2022-05-01 01:00:00' WHERE product_id = 1;
+step s2_insert_on_conflict3:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET date_added = '2022-05-01 02:00:00';
+
+ERROR:  could not serialize access due to concurrent update
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sun May 01 01:00:00 2022 PDT
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s2_repeatable_read_txn s2_select s1_insert_on_conflict1 s2_update1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_insert_on_conflict1:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET discounted_price = 5;
+
+step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1;
+ERROR:  could not serialize access due to concurrent update
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             5              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s2_repeatable_read_txn s2_select s1_insert_on_conflict2 s2_update5 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_insert_on_conflict2:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET date_expires = '2022-05-01 02:00:00';
+
+step s2_update5: UPDATE products SET date_added = '2022-06-01 02:00:00' WHERE product_id = 1;
+ERROR:  could not serialize access due to concurrent update
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sun May 01 02:00:00 2022 PDT
+
+starting permutation: s1_priority s2_priority s1_repeatable_read_txn s2_repeatable_read_txn s2_select s1_insert_on_conflict3 s2_update6 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_insert_on_conflict3:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET date_added = '2022-05-01 02:00:00';
+
+step s2_update6: UPDATE products SET date_expires = '2022-05-01 02:00:00' WHERE product_id = 1;
+ERROR:  could not serialize access due to concurrent update
+step s1_commit: COMMIT;
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sun May 01 02:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s1_select s2_repeatable_read_txn s1_update1 s2_update1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
+step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update1: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           2              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s1_select s2_repeatable_read_txn s1_update1 s2_update2 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
+step s2_update2: UPDATE products SET discounted_price = 5 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update2: <... completed>
+error in steps s1_commit s2_update2: ERROR:  new row for relation "products" violates check constraint "products_check1"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           3              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s1_select s2_repeatable_read_txn s1_update1 s2_update3 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
+step s2_update3: UPDATE products SET name = 'pork' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update3: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           3              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s1_select s2_repeatable_read_txn s1_update1 s2_update4 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
+step s2_update4: UPDATE products SET product_id = 12 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update4: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+12             Sat Jan 01 05:00:00 2022oats           3              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s1_select s2_repeatable_read_txn s1_update2 s2_update1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update2: UPDATE products SET discounted_price = 4 WHERE product_id = 1;
+step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update1: <... completed>
+error in steps s1_commit s2_update1: ERROR:  new row for relation "products" violates check constraint "products_check1"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             4              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s1_select s2_repeatable_read_txn s1_update2 s2_update2 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update2: UPDATE products SET discounted_price = 4 WHERE product_id = 1;
+step s2_update2: UPDATE products SET discounted_price = 5 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update2: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             5              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s1_select s2_repeatable_read_txn s1_update2 s2_update3 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update2: UPDATE products SET discounted_price = 4 WHERE product_id = 1;
+step s2_update3: UPDATE products SET name = 'pork' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update3: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           10             4              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s1_select s2_repeatable_read_txn s1_update2 s2_update4 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update2: UPDATE products SET discounted_price = 4 WHERE product_id = 1;
+step s2_update4: UPDATE products SET product_id = 12 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update4: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+12             Sat Jan 01 05:00:00 2022oats           10             4              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s1_select s2_repeatable_read_txn s1_update3 s2_update1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update1: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           2              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s1_select s2_repeatable_read_txn s1_update3 s2_update2 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update2: UPDATE products SET discounted_price = 5 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update2: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           10             5              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s1_select s2_repeatable_read_txn s1_update3 s2_update3 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update3: UPDATE products SET name = 'pork' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update3: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s1_select s2_repeatable_read_txn s1_update3 s2_update4 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update4: UPDATE products SET product_id = 12 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update4: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+12             Sat Jan 01 05:00:00 2022pork           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s1_select s2_repeatable_read_txn s1_update3 s2_update1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update1: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           2              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s1_select s2_repeatable_read_txn s1_update3 s2_update2 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update2: UPDATE products SET discounted_price = 5 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update2: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           10             5              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s1_select s2_repeatable_read_txn s1_update3 s2_update3 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update3: UPDATE products SET name = 'pork' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update3: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s1_select s2_repeatable_read_txn s1_update3 s2_update4 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update4: UPDATE products SET product_id = 12 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update4: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+12             Sat Jan 01 05:00:00 2022pork           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s1_select s2_repeatable_read_txn s1_update5 s2_update5 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update5: UPDATE products SET date_added = '2022-06-01 01:00:00' WHERE product_id = 1;
+step s2_update5: UPDATE products SET date_added = '2022-06-01 02:00:00' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update5: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Wed Jun 01 02:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s1_select s2_repeatable_read_txn s1_update6 s2_update6 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update6: UPDATE products SET date_expires = '2022-05-01 01:00:00' WHERE product_id = 1;
+step s2_update6: UPDATE products SET date_expires = '2022-05-01 02:00:00' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update6: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sun May 01 02:00:00 2022 PDT
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s1_select s2_repeatable_read_txn s1_update5 s2_update6 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update5: UPDATE products SET date_added = '2022-06-01 01:00:00' WHERE product_id = 1;
+step s2_update6: UPDATE products SET date_expires = '2022-05-01 02:00:00' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update6: <... completed>
+error in steps s1_commit s2_update6: ERROR:  new row for relation "products" violates check constraint "products_check"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Wed Jun 01 01:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s1_select s2_repeatable_read_txn s1_update6 s2_update5 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_repeatable_read_txn: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+step s1_update6: UPDATE products SET date_expires = '2022-05-01 01:00:00' WHERE product_id = 1;
+step s2_update5: UPDATE products SET date_added = '2022-06-01 02:00:00' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update5: <... completed>
+error in steps s1_commit s2_update5: ERROR:  new row for relation "products" violates check constraint "products_check"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sun May 01 01:00:00 2022 PDT
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s1_select s2_read_committed_txn s1_update1 s2_insert_on_conflict1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
+step s2_insert_on_conflict1:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET discounted_price = 5;
+ <waiting ...>
+step s1_commit: COMMIT;
+step s2_insert_on_conflict1: <... completed>
+error in steps s1_commit s2_insert_on_conflict1: ERROR:  new row for relation "products" violates check constraint "products_check1"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           3              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s1_select s2_read_committed_txn s1_update5 s2_insert_on_conflict2 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_update5: UPDATE products SET date_added = '2022-06-01 01:00:00' WHERE product_id = 1;
+step s2_insert_on_conflict2:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET date_expires = '2022-05-01 02:00:00';
+ <waiting ...>
+step s1_commit: COMMIT;
+step s2_insert_on_conflict2: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022fish           11             2              Fri Dec 30 23:59:59 2022 PST
+1              Wed Jun 01 01:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s1_select s2_read_committed_txn s1_update6 s2_insert_on_conflict3 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_update6: UPDATE products SET date_expires = '2022-05-01 01:00:00' WHERE product_id = 1;
+step s2_insert_on_conflict3:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET date_added = '2022-05-01 02:00:00';
+ <waiting ...>
+step s1_commit: COMMIT;
+step s2_insert_on_conflict3: <... completed>
+error in steps s1_commit s2_insert_on_conflict3: ERROR:  new row for relation "products" violates check constraint "products_check"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sun May 01 01:00:00 2022 PDT
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s1_select s2_read_committed_txn s1_insert_on_conflict1 s2_update1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_insert_on_conflict1:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET discounted_price = 5;
+
+step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update1: <... completed>
+error in steps s1_commit s2_update1: ERROR:  new row for relation "products" violates check constraint "products_check1"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             5              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s1_select s2_read_committed_txn s1_insert_on_conflict2 s2_update5 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_insert_on_conflict2:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET date_expires = '2022-05-01 02:00:00';
+
+step s2_update5: UPDATE products SET date_added = '2022-06-01 02:00:00' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update5: <... completed>
+error in steps s1_commit s2_update5: ERROR:  new row for relation "products" violates check constraint "products_check"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sun May 01 02:00:00 2022 PDT
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s1_select s2_read_committed_txn s1_insert_on_conflict3 s2_update6 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s1_insert_on_conflict3:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET date_added = '2022-05-01 02:00:00';
+
+step s2_update6: UPDATE products SET date_expires = '2022-05-01 02:00:00' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update6: <... completed>
+error in steps s1_commit s2_update6: ERROR:  new row for relation "products" violates check constraint "products_check"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sun May 01 02:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s2_read_committed_txn s2_select s1_update1 s2_update1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
+step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update1: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           2              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s2_read_committed_txn s2_select s1_update1 s2_update2 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
+step s2_update2: UPDATE products SET discounted_price = 5 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update2: <... completed>
+error in steps s1_commit s2_update2: ERROR:  new row for relation "products" violates check constraint "products_check1"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           3              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s2_read_committed_txn s2_select s1_update1 s2_update3 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
+step s2_update3: UPDATE products SET name = 'pork' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update3: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           3              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s2_read_committed_txn s2_select s1_update1 s2_update4 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
+step s2_update4: UPDATE products SET product_id = 12 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update4: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+12             Sat Jan 01 05:00:00 2022oats           3              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s2_read_committed_txn s2_select s1_update2 s2_update1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update2: UPDATE products SET discounted_price = 4 WHERE product_id = 1;
+step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update1: <... completed>
+error in steps s1_commit s2_update1: ERROR:  new row for relation "products" violates check constraint "products_check1"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             4              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s2_read_committed_txn s2_select s1_update2 s2_update2 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update2: UPDATE products SET discounted_price = 4 WHERE product_id = 1;
+step s2_update2: UPDATE products SET discounted_price = 5 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update2: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             5              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s2_read_committed_txn s2_select s1_update2 s2_update3 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update2: UPDATE products SET discounted_price = 4 WHERE product_id = 1;
+step s2_update3: UPDATE products SET name = 'pork' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update3: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           10             4              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s2_read_committed_txn s2_select s1_update2 s2_update4 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update2: UPDATE products SET discounted_price = 4 WHERE product_id = 1;
+step s2_update4: UPDATE products SET product_id = 12 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update4: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+12             Sat Jan 01 05:00:00 2022oats           10             4              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s2_read_committed_txn s2_select s1_update3 s2_update1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update1: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           2              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s2_read_committed_txn s2_select s1_update3 s2_update2 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update2: UPDATE products SET discounted_price = 5 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update2: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           10             5              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s2_read_committed_txn s2_select s1_update3 s2_update3 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update3: UPDATE products SET name = 'pork' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update3: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s2_read_committed_txn s2_select s1_update3 s2_update4 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update4: UPDATE products SET product_id = 12 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update4: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+12             Sat Jan 01 05:00:00 2022pork           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s2_read_committed_txn s2_select s1_update3 s2_update1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update1: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           2              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s2_read_committed_txn s2_select s1_update3 s2_update2 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update2: UPDATE products SET discounted_price = 5 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update2: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           10             5              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s2_read_committed_txn s2_select s1_update3 s2_update3 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update3: UPDATE products SET name = 'pork' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update3: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022pork           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s2_read_committed_txn s2_select s1_update3 s2_update4 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update3: UPDATE products SET name = 'pork' WHERE product_id = 1;
+step s2_update4: UPDATE products SET product_id = 12 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update4: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+12             Sat Jan 01 05:00:00 2022pork           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s2_read_committed_txn s2_select s1_update5 s2_update5 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update5: UPDATE products SET date_added = '2022-06-01 01:00:00' WHERE product_id = 1;
+step s2_update5: UPDATE products SET date_added = '2022-06-01 02:00:00' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update5: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Wed Jun 01 02:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s2_read_committed_txn s2_select s1_update6 s2_update6 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update6: UPDATE products SET date_expires = '2022-05-01 01:00:00' WHERE product_id = 1;
+step s2_update6: UPDATE products SET date_expires = '2022-05-01 02:00:00' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update6: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sun May 01 02:00:00 2022 PDT
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s2_read_committed_txn s2_select s1_update5 s2_update6 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update5: UPDATE products SET date_added = '2022-06-01 01:00:00' WHERE product_id = 1;
+step s2_update6: UPDATE products SET date_expires = '2022-05-01 02:00:00' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update6: <... completed>
+error in steps s1_commit s2_update6: ERROR:  new row for relation "products" violates check constraint "products_check"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Wed Jun 01 01:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s2_read_committed_txn s2_select s1_update6 s2_update5 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update6: UPDATE products SET date_expires = '2022-05-01 01:00:00' WHERE product_id = 1;
+step s2_update5: UPDATE products SET date_added = '2022-06-01 02:00:00' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update5: <... completed>
+error in steps s1_commit s2_update5: ERROR:  new row for relation "products" violates check constraint "products_check"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sun May 01 01:00:00 2022 PDT
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s2_read_committed_txn s2_select s1_update1 s2_insert_on_conflict1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update1: UPDATE products SET price = 3 WHERE product_id = 1;
+step s2_insert_on_conflict1:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET discounted_price = 5;
+ <waiting ...>
+step s1_commit: COMMIT;
+step s2_insert_on_conflict1: <... completed>
+error in steps s1_commit s2_insert_on_conflict1: ERROR:  new row for relation "products" violates check constraint "products_check1"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           3              1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s2_read_committed_txn s2_select s1_update5 s2_insert_on_conflict2 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update5: UPDATE products SET date_added = '2022-06-01 01:00:00' WHERE product_id = 1;
+step s2_insert_on_conflict2:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET date_expires = '2022-05-01 02:00:00';
+ <waiting ...>
+step s1_commit: COMMIT;
+step s2_insert_on_conflict2: <... completed>
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022fish           11             2              Fri Dec 30 23:59:59 2022 PST
+1              Wed Jun 01 01:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s2_read_committed_txn s2_select s1_update6 s2_insert_on_conflict3 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_update6: UPDATE products SET date_expires = '2022-05-01 01:00:00' WHERE product_id = 1;
+step s2_insert_on_conflict3:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET date_added = '2022-05-01 02:00:00';
+ <waiting ...>
+step s1_commit: COMMIT;
+step s2_insert_on_conflict3: <... completed>
+error in steps s1_commit s2_insert_on_conflict3: ERROR:  new row for relation "products" violates check constraint "products_check"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sun May 01 01:00:00 2022 PDT
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s2_read_committed_txn s2_select s1_insert_on_conflict1 s2_update1 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_insert_on_conflict1:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET discounted_price = 5;
+
+step s2_update1: UPDATE products SET price = 2 WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update1: <... completed>
+error in steps s1_commit s2_update1: ERROR:  new row for relation "products" violates check constraint "products_check1"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             5              Sat Dec 31 23:59:59 2022 PST
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s2_read_committed_txn s2_select s1_insert_on_conflict2 s2_update5 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_insert_on_conflict2:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET date_expires = '2022-05-01 02:00:00';
+
+step s2_update5: UPDATE products SET date_added = '2022-06-01 02:00:00' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update5: <... completed>
+error in steps s1_commit s2_update5: ERROR:  new row for relation "products" violates check constraint "products_check"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sun May 01 02:00:00 2022 PDT
+
+starting permutation: s1_priority s2_priority s1_read_committed_txn s2_read_committed_txn s2_select s1_insert_on_conflict3 s2_update6 s1_commit s2_commit s1_select
+step s1_priority: SET yb_transaction_priority_lower_bound = .9;
+step s2_priority: SET yb_transaction_priority_upper_bound= .1;
+step s1_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_read_committed_txn: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+step s2_select: SELECT * from products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sat Jan 01 05:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST
+step s1_insert_on_conflict3:
+    INSERT INTO products VALUES(1,'2022-01-01 05:00:00', 'fish', 11, 2, '2022-12-30 23:59:59')
+    ON CONFLICT(product_id, date_added) DO UPDATE SET date_added = '2022-05-01 02:00:00';
+
+step s2_update6: UPDATE products SET date_expires = '2022-05-01 02:00:00' WHERE product_id = 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_update6: <... completed>
+error in steps s1_commit s2_update6: ERROR:  new row for relation "products" violates check constraint "products_check"
+step s2_commit: COMMIT;
+step s1_select: SELECT * FROM products;
+product_id     date_added     name           price          discounted_pricedate_expires
+
+1              Sun May 01 02:00:00 2022oats           10             1              Sat Dec 31 23:59:59 2022 PST

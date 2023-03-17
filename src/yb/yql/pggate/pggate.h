@@ -478,6 +478,10 @@ class PgApiImpl {
   void GetAndResetOperationFlushRpcStats(uint64_t* count, uint64_t* wait_time);
 
   //------------------------------------------------------------------------------------------------
+  // Writes
+  Status DmlWriteSetRowLockRequired(YBCPgStatement handle);
+
+  //------------------------------------------------------------------------------------------------
   // Insert.
   Status NewInsert(const PgObjectId& table_id,
                    bool is_single_row_txn,
