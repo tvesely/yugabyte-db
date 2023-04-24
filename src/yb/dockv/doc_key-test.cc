@@ -569,13 +569,16 @@ TEST_F(DocKeyTest, TestEnumerateIntents) {
       vector<CollectedIntent> collected_intents_old;
       KeyBytes encoded_key_buffer;
 
+      // TODO: need to run this test
+      // TODO: need to add a test for when RowLockRequired is false
       VLOG(1) << "EnumerateIntents for: " << test_description;
       ASSERT_OK(EnumerateIntents(
           subdockey_slice,
           /* value */ Slice("some_value"),
           IntentCollector(&collected_intents),
           &encoded_key_buffer,
-          partial_range_key_intents));
+          partial_range_key_intents,
+          RowLockRequired::kTrue));
 
       if (VLOG_IS_ON(1)) {
         for (const auto& intent : collected_intents) {
@@ -675,6 +678,7 @@ TEST_F(DocKeyTest, TestEnumerateIntents) {
 
         ASSERT_EQ(intent.full_doc_key, a.doc_key() == sub_doc_key.doc_key());
         ASSERT_EQ(expected_intents[i], decoded_intent_key);
+        // TODO: This breaks here, because I've changed which intents are set where
         if (i < num_intents - 1) {
           ASSERT_EQ(IntentStrength::kWeak, intent.strength);
           ASSERT_EQ(0, intent.value.size());

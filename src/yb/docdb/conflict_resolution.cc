@@ -947,6 +947,7 @@ class TransactionConflictResolverContext : public ConflictResolverContextBase {
     KeyBytes buffer;
     buffer.Reserve(kKeyBufferInitialSize);
     const auto row_mark = GetRowMarkTypeFromPB(write_batch_);
+    dockv::RowLockRequired row_lock_required(write_batch_.row_lock_required());
     IntentTypesContainer container;
     IntentProcessor write_processor(
         &container,
@@ -969,7 +970,8 @@ class TransactionConflictResolverContext : public ConflictResolverContextBase {
               return Status::OK();
             },
             &buffer,
-            resolver->partial_range_key_intents()));
+            resolver->partial_range_key_intents(),
+            row_lock_required));
       }
     }
 
@@ -985,7 +987,7 @@ class TransactionConflictResolverContext : public ConflictResolverContextBase {
             read_processor.Process(strength, full_doc_key, intent_key);
             return Status::OK();
           },
-          resolver->partial_range_key_intents()));
+          resolver->partial_range_key_intents(), dockv::RowLockRequired::kFalse));
     }
 
     if (container.empty()) {
@@ -1149,12 +1151,13 @@ class OperationConflictResolverContext : public ConflictResolverContextBase {
       strong_intent_types = GetStrongIntentTypeSet(isolation, dockv::OperationKind::kWrite,
                                                    RowMarkType::ROW_MARK_ABSENT);
 
+      // TODO: how are these intents used here?
       for (const auto& doc_path : doc_paths) {
         VLOG_WITH_PREFIX_AND_FUNC(4)
             << "Doc path: " << SubDocKey::DebugSliceToString(doc_path.as_slice());
         RETURN_NOT_OK(EnumerateIntents(
             doc_path.as_slice(), Slice(), callback, &encoded_key_buffer,
-            PartialRangeKeyIntents::kTrue));
+            PartialRangeKeyIntents::kTrue, dockv::RowLockRequired::kFalse /* TODO: is this correct? */));
       }
     }
 

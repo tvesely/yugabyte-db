@@ -52,6 +52,7 @@ enum class YBHashSchema;
 // PrimitiveValue to string. This is useful when displaying write batches for secondary indexes.
 YB_STRONGLY_TYPED_BOOL(AutoDecodeKeys);
 YB_STRONGLY_TYPED_BOOL(PartialRangeKeyIntents);
+YB_STRONGLY_TYPED_BOOL(RowLockRequired);
 YB_STRONGLY_TYPED_BOOL(UseHash);
 
 YB_DEFINE_ENUM(OperationKind, (kRead)(kWrite));

@@ -193,8 +193,7 @@ TransactionalWriter::TransactionalWriter(
       isolation_level_(isolation_level),
       partial_range_key_intents_(partial_range_key_intents),
       replicated_batches_state_(replicated_batches_state),
-      intra_txn_write_id_(intra_txn_write_id) {
-}
+      intra_txn_write_id_(intra_txn_write_id) {}
 
 // We have the following distinct types of data in this "intent store":
 // Main intent data:
@@ -209,6 +208,7 @@ TransactionalWriter::TransactionalWriter(
 Status TransactionalWriter::Apply(rocksdb::DirectWriteHandler* handler) {
   VLOG(4) << "PrepareTransactionWriteBatch(), write_id = " << write_id_;
 
+  dockv::RowLockRequired row_lock_required(put_batch_.row_lock_required());
   row_mark_ = GetRowMarkTypeFromPB(put_batch_);
   handler_ = handler;
 
@@ -241,14 +241,18 @@ Status TransactionalWriter::Apply(rocksdb::DirectWriteHandler* handler) {
     // We cannot recover from failures here, because it means that we cannot apply replicated
     // operation.
     RETURN_NOT_OK(EnumerateIntents(
-        put_batch_.write_pairs(), std::ref(*this), partial_range_key_intents_));
+        put_batch_.write_pairs(), std::ref(*this), partial_range_key_intents_,
+        row_lock_required));
   }
 
   if (!put_batch_.read_pairs().empty()) {
     strong_intent_types_ = GetStrongIntentTypeSet(
         isolation_level_, dockv::OperationKind::kRead, row_mark_);
+
+    // TODO: are row locks ever required with read intents?
     RETURN_NOT_OK(EnumerateIntents(
-        put_batch_.read_pairs(), std::ref(*this), partial_range_key_intents_));
+        put_batch_.read_pairs(), std::ref(*this), partial_range_key_intents_,
+        dockv::RowLockRequired::kFalse));
   }
 
   return Finish();

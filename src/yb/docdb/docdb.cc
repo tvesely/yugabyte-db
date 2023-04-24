@@ -102,6 +102,7 @@ struct DetermineKeysToLockResult {
   }
 };
 
+// TODO: How to lock the correct objects in memory?
 Result<DetermineKeysToLockResult> DetermineKeysToLock(
     const std::vector<std::unique_ptr<DocOperation>>& doc_write_ops,
     const ArenaList<LWKeyValuePairPB>& read_pairs,
@@ -176,7 +177,7 @@ Result<DetermineKeysToLockResult> DetermineKeysToLock(
                                 ? strong_read_intent_types
                                 : StrongToWeak(strong_read_intent_types),
                              &result.lock_batch);
-        }, partial_range_key_intents));
+        }, partial_range_key_intents, dockv::RowLockRequired::kFalse));
   }
 
   return result;
@@ -542,7 +543,8 @@ bool PrepareExternalWriteBatch(
 Status EnumerateIntents(
     const ArenaList<LWKeyValuePairPB>& kv_pairs,
     const dockv::EnumerateIntentsCallback& functor,
-    dockv::PartialRangeKeyIntents partial_range_key_intents) {
+    dockv::PartialRangeKeyIntents partial_range_key_intents,
+    dockv::RowLockRequired row_lock_required) {
   if (kv_pairs.empty()) {
     return Status::OK();
   }
@@ -556,7 +558,7 @@ Status EnumerateIntents(
     CHECK(!kv_pair.value().empty());
     RETURN_NOT_OK(dockv::EnumerateIntents(
         kv_pair.key(), kv_pair.value(), functor, &encoded_key, partial_range_key_intents,
-        last_key));
+        row_lock_required, last_key));
     if (last_key) {
       break;
     }
