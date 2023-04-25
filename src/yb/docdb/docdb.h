@@ -183,8 +183,7 @@ bool PrepareExternalWriteBatch(
 Status EnumerateIntents(
     const ArenaList<LWKeyValuePairPB>& kv_pairs,
     const dockv::EnumerateIntentsCallback& functor,
-    dockv::PartialRangeKeyIntents partial_range_key_intents,
-    dockv::RowLockRequired row_lock_required);
+    dockv::PartialRangeKeyIntents partial_range_key_intents);
 
 // replicated_batches_state format does not matter at this point, because it is just
 // appended to appropriate value.

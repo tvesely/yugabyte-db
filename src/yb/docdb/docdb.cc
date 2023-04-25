@@ -177,7 +177,7 @@ Result<DetermineKeysToLockResult> DetermineKeysToLock(
                                 ? strong_read_intent_types
                                 : StrongToWeak(strong_read_intent_types),
                              &result.lock_batch);
-        }, partial_range_key_intents, dockv::RowLockRequired::kFalse));
+        }, partial_range_key_intents));
   }
 
   return result;
@@ -543,8 +543,7 @@ bool PrepareExternalWriteBatch(
 Status EnumerateIntents(
     const ArenaList<LWKeyValuePairPB>& kv_pairs,
     const dockv::EnumerateIntentsCallback& functor,
-    dockv::PartialRangeKeyIntents partial_range_key_intents,
-    dockv::RowLockRequired row_lock_required) {
+    dockv::PartialRangeKeyIntents partial_range_key_intents) {
   if (kv_pairs.empty()) {
     return Status::OK();
   }
@@ -558,7 +557,7 @@ Status EnumerateIntents(
     CHECK(!kv_pair.value().empty());
     RETURN_NOT_OK(dockv::EnumerateIntents(
         kv_pair.key(), kv_pair.value(), functor, &encoded_key, partial_range_key_intents,
-        row_lock_required, last_key));
+        last_key));
     if (last_key) {
       break;
     }

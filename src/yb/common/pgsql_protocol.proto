@@ -271,9 +271,6 @@ message PgsqlWriteRequestPB {
   // index backfill enabled.
   optional bool is_delete_persist_needed = 20 [default = false];
 
-  // Needs an explicit lock of the full primary key
-  optional bool is_row_lock_required = 26 [default = false];
-
   // Columns refereced by this write operation.
   // Provides mapping between DocDB and Postgres identifiers, and provides Postgres type information
   // to convert between DocDB and Postgres formats.

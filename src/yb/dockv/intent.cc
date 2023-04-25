@@ -286,8 +286,7 @@ Status EnumerateWeakIntents(
     Slice key,
     const EnumerateIntentsCallback& functor,
     KeyBytes* encoded_key_buffer,
-    PartialRangeKeyIntents partial_range_key_intents,
-    RowLockRequired row_lock_required) {
+    PartialRangeKeyIntents partial_range_key_intents) {
   static const Slice kEmptyIntentValue;
 
   encoded_key_buffer->Clear();
@@ -361,17 +360,12 @@ Status EnumerateWeakIntents(
       return Status::OK();
     }
 
-    IntentStrength strength = IntentStrength::kWeak;
-    FullDocKey full_doc_key(key[0] == KeyEntryTypeAsChar::kGroupEnd);
-    if(full_doc_key && row_lock_required)
-      strength = IntentStrength::kStrong;
-
-    // TODO: fix comments like this one
     // Generate a weak intent that only includes the hash component.
     RETURN_NOT_OK(functor(
-        strength, full_doc_key, kEmptyIntentValue, encoded_key_buffer, LastKey::kFalse));
+        IntentStrength::kWeak, FullDocKey(key[0] == KeyEntryTypeAsChar::kGroupEnd),
+        kEmptyIntentValue, encoded_key_buffer, LastKey::kFalse));
 
-    // Remove the kGroupEnd we added a bit earlier, so we can append some range components.
+    // Remove the kGroupEnd we added a bit earlier so we can append some range components.
     encoded_key_buffer->RemoveLastByte();
   } else {
     // No hash component.
@@ -392,15 +386,10 @@ Status EnumerateWeakIntents(
       // This is the last range key and there are no subkeys.
       return Status::OK();
     }
-
-    IntentStrength strength = IntentStrength::kWeak;
     FullDocKey full_doc_key(key[0] == KeyEntryTypeAsChar::kGroupEnd);
-    if(full_doc_key && row_lock_required)
-      strength = IntentStrength::kStrong;
-
     if (partial_range_key_intents || full_doc_key) {
       RETURN_NOT_OK(functor(
-          strength, full_doc_key, kEmptyIntentValue, encoded_key_buffer,
+          IntentStrength::kWeak, full_doc_key, kEmptyIntentValue, encoded_key_buffer,
           LastKey::kFalse));
     }
     encoded_key_buffer->RemoveLastByte();
@@ -421,7 +410,6 @@ Status EnumerateWeakIntents(
       // This was the last subkey.
       return Status::OK();
     }
-    // TODO: do we to lock any of these?
     RETURN_NOT_OK(functor(
         IntentStrength::kWeak, FullDocKey::kTrue, kEmptyIntentValue, encoded_key_buffer,
         LastKey::kFalse));
@@ -438,9 +426,9 @@ Status EnumerateWeakIntents(
 Status EnumerateIntents(
     Slice key, const Slice& intent_value, const EnumerateIntentsCallback& functor,
     KeyBytes* encoded_key_buffer, PartialRangeKeyIntents partial_range_key_intents,
-    RowLockRequired row_lock_required, LastKey last_key) {
+    LastKey last_key) {
   RETURN_NOT_OK(EnumerateWeakIntents(
-      key, functor, encoded_key_buffer, partial_range_key_intents, row_lock_required));
+      key, functor, encoded_key_buffer, partial_range_key_intents));
   return functor(
       IntentStrength::kStrong, FullDocKey::kTrue, intent_value, encoded_key_buffer, last_key);
 }

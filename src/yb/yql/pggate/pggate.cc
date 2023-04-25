@@ -1300,7 +1300,6 @@ Status PgApiImpl::FlushBufferedOperations() {
   return pg_session_->FlushBufferedOperations();
 }
 
-// Insert ------------------------------------------------------------------------------------------
 Status PgApiImpl::DmlExecWriteOp(PgStatement *handle, int32_t *rows_affected_count) {
   switch (handle->stmt_op()) {
     case StmtOp::STMT_INSERT:
@@ -1318,24 +1317,6 @@ Status PgApiImpl::DmlExecWriteOp(PgStatement *handle, int32_t *rows_affected_cou
     default:
       break;
   }
-  return STATUS(InvalidArgument, "Invalid statement handle");
-}
-
-Status PgApiImpl::DmlWriteSetRowLockRequired(PgStatement *handle) {
-  if (!handle) {
-    return STATUS(InvalidArgument, "Invalid statement handle");
-  }
-
-  switch (handle->stmt_op()) {
-    case StmtOp::STMT_UPDATE:
-    case StmtOp::STMT_DELETE:
-    case StmtOp::STMT_INSERT:
-      down_cast<PgDmlWrite*>(handle)->SetRowLockRequired();
-      return Status::OK();
-    default:
-      break;
-  }
-
   return STATUS(InvalidArgument, "Invalid statement handle");
 }
 

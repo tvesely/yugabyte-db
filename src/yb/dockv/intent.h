@@ -160,6 +160,6 @@ using EnumerateIntentsCallback = boost::function<
 Status EnumerateIntents(
     Slice key, const Slice& intent_value, const EnumerateIntentsCallback& functor,
     KeyBytes* encoded_key_buffer, PartialRangeKeyIntents partial_range_key_intents,
-    RowLockRequired row_lock_required, LastKey last_key = LastKey::kFalse);
+    LastKey last_key = LastKey::kFalse);
 
 }  // namespace yb::dockv

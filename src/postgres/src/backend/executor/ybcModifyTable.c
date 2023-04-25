@@ -920,11 +920,6 @@ bool YBCExecuteUpdate(Relation rel,
 		HandleYBStatus(YbPgDmlAppendColumnRef(update_stmt, yb_expr, true));
 	}
 
-	TupleConstr *constr = rel->rd_att->constr;
-
-	if (constr && constr->num_check > 0)
-		HandleYBStatus(YBCPgDmlWriteSetRowLockRequired(update_stmt));
-
 	/* Execute the statement. */
 
 	/*

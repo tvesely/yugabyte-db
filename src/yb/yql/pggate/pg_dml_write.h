@@ -41,10 +41,6 @@ class PgDmlWrite : public PgDml {
     write_req_->set_is_ysql_catalog_change_using_protobuf(true);
   }
 
-  void SetRowLockRequired() {
-    write_req_->set_is_row_lock_required(true);
-  }
-
   void SetCatalogCacheVersion(std::optional<PgOid> db_oid,
                               uint64_t catalog_cache_version) override {
     DoSetCatalogCacheVersion(write_req_.get(), db_oid, catalog_cache_version);

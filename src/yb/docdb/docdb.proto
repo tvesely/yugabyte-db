@@ -59,12 +59,6 @@ message KeyValueWriteBatchPB {
   // isolation level.
   optional WaitPolicy wait_policy = 10;
   repeated ApplyExternalTransactionPB apply_external_transactions = 7;
-  // TODO: is there any situation where we specifically allow column level locking?
-  // Except for when specifically allowed, row level locking is required in Postgres in order to ensure integrity. // TODO: redis? ycql?
-  //   TODO: This is actually backwards- we should default to using row locking, and specifically set which key needs
-  //         to be locked. Also, this really should be set on each write_pair. Any write pair that specifically allows locking
-  //         should have the flag set.
-  optional bool row_lock_required = 13 [default = true];
 
   optional int64 ttl = 9;
 
