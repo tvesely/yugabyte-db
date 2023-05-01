@@ -226,6 +226,10 @@ Result<std::list<QLTableRow>> PgLockStatusRequestor(
         RETURN_NOT_OK(SetColumnValue(
             "transaction_id", VERIFY_RESULT(Uuid::FromString(l.transaction_id())), schema, &row));
         RETURN_NOT_OK(SetColumnValue("subtransaction_id", l.subtransaction_id(), schema, &row));
+
+        // TODO: Add this when the RPC returns the status_tablet_id
+        //RETURN_NOT_OK(SetColumnValue("status_tablet_id", l.status_tablet_id(), schema, &row));
+
         RETURN_NOT_OK(SetColumnValue("is_explicit", l.is_explicit(), schema, &row));
 
         if (l.hash_cols().size() > 0)

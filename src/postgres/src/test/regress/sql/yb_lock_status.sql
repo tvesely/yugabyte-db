@@ -28,7 +28,9 @@ OR REPLACE FUNCTION run_yb_lock_status(input_relation oid, input_transaction_id 
                                               OUT valid_waitend boolean, OUT has_node boolean,
                                               OUT has_tablet_id boolean,
                                               OUT has_transaction_id boolean,
-                                              OUT valid_subtransaction_id boolean, OUT is_explicit boolean,
+                                              OUT valid_subtransaction_id boolean,
+                                              OUT has_status_tablet_id boolean,
+                                              OUT is_explicit boolean,
                                               OUT hash_cols text[],
                                               OUT range_cols text[], OUT column_id integer, OUT is_full_pk boolean,
                                               OUT multiple_rows_locked boolean, OUT num_blocking int4)
@@ -47,6 +49,7 @@ BEGIN
                         CASE WHEN l.tablet_id IS NOT NULL THEN true ELSE FALSE END      as has_tablet_id,
                         CASE WHEN l.transaction_id IS NOT NULL THEN true ELSE FALSE END as has_transaction_id,
                         (l.subtransaction_id > 0) as valid_subtransaction_id,
+                        CASE WHEN l.status_tablet_id IS NOT NULL THEN true ELSE FALSE END as has_status_tablet_id,
                         l.is_explicit,
                         l.hash_cols,
                         l.range_cols,

@@ -33,7 +33,7 @@
 #include "utils/builtins.h"
 
 /* Number of columns in yb_lock_status output */
-#define YB_NUM_LOCK_STATUS_COLUMNS 20
+#define YB_NUM_LOCK_STATUS_COLUMNS 21
 
 /*
  * yb_lock_status - produce a view with one row per held or awaited lock
@@ -97,19 +97,21 @@ yb_lock_status(PG_FUNCTION_ARGS)
 						   UUIDOID, -1, 0);
 		TupleDescInitEntry(tupdesc, (AttrNumber) 13, "subtransaction_id",
 						   INT4OID, -1, 0);
-		TupleDescInitEntry(tupdesc, (AttrNumber) 14, "is_explicit",
+		TupleDescInitEntry(tupdesc, (AttrNumber) 14, "status_tablet_id",
+						   TEXTOID, -1, 0);
+		TupleDescInitEntry(tupdesc, (AttrNumber) 15, "is_explicit",
 						   BOOLOID, -1, 0);
-		TupleDescInitEntry(tupdesc, (AttrNumber) 15, "hash_cols",
+		TupleDescInitEntry(tupdesc, (AttrNumber) 16, "hash_cols",
 						   TEXTARRAYOID, -1, 0);
-		TupleDescInitEntry(tupdesc, (AttrNumber) 16, "range_cols",
+		TupleDescInitEntry(tupdesc, (AttrNumber) 17, "range_cols",
 						   TEXTARRAYOID, -1, 0);
-		TupleDescInitEntry(tupdesc, (AttrNumber) 17, "column_id",
+		TupleDescInitEntry(tupdesc, (AttrNumber) 18, "column_id",
 						   INT4OID, -1, 0);
-		TupleDescInitEntry(tupdesc, (AttrNumber) 18, "is_full_pk",
+		TupleDescInitEntry(tupdesc, (AttrNumber) 19, "is_full_pk",
 						   BOOLOID, -1, 0);
-		TupleDescInitEntry(tupdesc, (AttrNumber) 19, "multiple_rows_locked",
+		TupleDescInitEntry(tupdesc, (AttrNumber) 20, "multiple_rows_locked",
 						   BOOLOID, -1, 0);
-		TupleDescInitEntry(tupdesc, (AttrNumber) 20, "blocked_by",
+		TupleDescInitEntry(tupdesc, (AttrNumber) 21, "blocked_by",
 						   UUIDARRAYOID, -1, 0);
 
 		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
