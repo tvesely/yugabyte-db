@@ -317,7 +317,7 @@ tuple_data_split_internal(Oid relid, char *tupdata,
 	rel = relation_open(relid, AccessShareLock);
 	tupdesc = RelationGetDescr(rel);
 
-	raw_attrs = initArrayResult(BYTEAOID, CurrentMemoryContext, false);
+	raw_attrs = initArrayResult(BYTEAOID, GetCurrentMemoryContext(), false);
 	nattrs = tupdesc->natts;
 
 	if (rel->rd_rel->relam != HEAP_TABLE_AM_OID)
@@ -383,7 +383,7 @@ tuple_data_split_internal(Oid relid, char *tupdata,
 						 errmsg("unexpected end of tuple data")));
 
 			if (attr->attlen == -1 && do_detoast)
-				attr_data = DatumGetByteaPCopy(tupdata + off);
+				attr_data = pg_detoast_datum_copy((struct varlena *) (tupdata + off));
 			else
 			{
 				attr_data = (bytea *) palloc(len + VARHDRSZ);
@@ -396,7 +396,7 @@ tuple_data_split_internal(Oid relid, char *tupdata,
 		}
 
 		raw_attrs = accumArrayResult(raw_attrs, PointerGetDatum(attr_data),
-									 is_null, BYTEAOID, CurrentMemoryContext);
+									 is_null, BYTEAOID, GetCurrentMemoryContext());
 		if (attr_data)
 			pfree(attr_data);
 	}
@@ -408,7 +408,7 @@ tuple_data_split_internal(Oid relid, char *tupdata,
 
 	relation_close(rel, AccessShareLock);
 
-	return makeArrayResult(raw_attrs, CurrentMemoryContext);
+	return makeArrayResult(raw_attrs, GetCurrentMemoryContext());
 }
 
 /*
@@ -492,7 +492,7 @@ tuple_data_split(PG_FUNCTION_ARGS)
 	if (t_bits)
 		pfree(t_bits);
 
-	PG_RETURN_ARRAYTYPE_P(res);
+	PG_RETURN_DATUM(res);
 }
 
 /*

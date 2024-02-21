@@ -276,6 +276,7 @@ extern bool RI_Initial_Check(Trigger *trigger,
 							 Relation fk_rel, Relation pk_rel);
 extern void RI_PartitionRemove_Check(Trigger *trigger, Relation fk_rel,
 									 Relation pk_rel);
+extern void YbAddTriggerFKReferenceIntent(Trigger *trigger, Relation fk_rel, HeapTuple new_row);
 
 /* result values for RI_FKey_trigger_type: */
 #define RI_TRIGGER_PK	1		/* is a trigger on the PK relation */
@@ -283,5 +284,8 @@ extern void RI_PartitionRemove_Check(Trigger *trigger, Relation fk_rel,
 #define RI_TRIGGER_NONE 0		/* is not an RI trigger function */
 
 extern int	RI_FKey_trigger_type(Oid tgfoid);
+
+/* Return true if the trigger description has non FK trigger. */
+extern bool HasNonRITrigger(const TriggerDesc* trigDesc);
 
 #endif							/* TRIGGER_H */

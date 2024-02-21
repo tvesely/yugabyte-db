@@ -481,7 +481,7 @@ publicationListToArray(List *publist)
 	MemoryContext oldcxt;
 
 	/* Create memory context for temporary allocations. */
-	memcxt = AllocSetContextCreate(CurrentMemoryContext,
+	memcxt = AllocSetContextCreate(GetCurrentMemoryContext(),
 								   "publicationListToArray to array",
 								   ALLOCSET_DEFAULT_SIZES);
 	oldcxt = MemoryContextSwitchTo(memcxt);
@@ -1421,7 +1421,7 @@ DropSubscription(DropSubscriptionStmt *stmt, bool isTopLevel)
 	EventTriggerSQLDropAddObject(&myself, true, true);
 
 	/* Remove the tuple from catalog. */
-	CatalogTupleDelete(rel, &tup->t_self);
+	CatalogTupleDelete(rel, tup);
 
 	ReleaseSysCache(tup);
 

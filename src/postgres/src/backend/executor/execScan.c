@@ -189,6 +189,15 @@ ExecScan(ScanState *node,
 	ResetExprContext(econtext);
 
 	/*
+	 * Use default prefetch limit if there's a qualifier for filtering since YB cannot LIMIT the
+	 * number rows but must feed all rows to NodeSort Operator.
+	 */
+	if (qual)
+	{
+		node->ps.state->yb_exec_params.limit_use_default = true;
+	}
+
+	/*
 	 * get a tuple from the access method.  Loop until we obtain a tuple that
 	 * passes the qualification.
 	 */

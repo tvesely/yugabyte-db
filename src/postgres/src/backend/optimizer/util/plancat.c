@@ -54,6 +54,8 @@
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 
+#include "pg_yb_utils.h"
+
 /* GUC parameter */
 int			constraint_exclusion = CONSTRAINT_EXCLUSION_PARTITION;
 
@@ -150,7 +152,7 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("cannot access temporary or unlogged relations during recovery")));
 
-	rel->min_attr = FirstLowInvalidHeapAttributeNumber + 1;
+	rel->min_attr = YBGetFirstLowInvalidAttributeNumber(relation) + 1;
 	rel->max_attr = RelationGetNumberOfAttributes(relation);
 	rel->reltablespace = RelationGetForm(relation)->reltablespace;
 
@@ -262,6 +264,7 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 			info->rel = rel;
 			info->ncolumns = ncolumns = index->indnatts;
 			info->nkeycolumns = nkeycolumns = index->indnkeyatts;
+			info->nhashcolumns = 0;
 
 			info->indexkeys = (int *) palloc(sizeof(int) * ncolumns);
 			info->indexcollations = (Oid *) palloc(sizeof(Oid) * nkeycolumns);
@@ -353,8 +356,15 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 					Oid			btopcintype;
 					int16		btstrategy;
 
-					info->reverse_sort[i] = (opt & INDOPTION_DESC) != 0;
-					info->nulls_first[i] = (opt & INDOPTION_NULLS_FIRST) != 0;
+					if (IsYBRelation(relation) && (opt & INDOPTION_HASH) != 0)
+					{
+						info->nhashcolumns++;
+						info->reverse_sort[i] = false;
+						info->nulls_first[i] = false;
+					} else {
+						info->reverse_sort[i] = (opt & INDOPTION_DESC) != 0;
+						info->nulls_first[i] = (opt & INDOPTION_NULLS_FIRST) != 0;
+					}
 
 					ltopr = get_opfamily_member(info->opfamily[i],
 												info->opcintype[i],
@@ -417,7 +427,7 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 			 * a table, except we can be sure that the index is not larger
 			 * than the table.
 			 */
-			if (info->indpred == NIL)
+			if (info->indpred == NIL && !IsYBRelation(indexRelation))
 			{
 				info->pages = RelationGetNumberOfBlocks(indexRelation);
 				info->tuples = rel->tuples;
@@ -984,6 +994,18 @@ estimate_rel_size(Relation rel, int32 *attr_widths,
 	BlockNumber relallvisible;
 	double		density;
 
+	/*
+	 * TODO We don't support forwarding size estimates to postgres yet.
+	 * Use whatever is in pg_class.
+	 */
+	if (IsYBRelation(rel))
+	{
+		*pages = rel->rd_rel->relpages;
+		*tuples = rel->rd_rel->reltuples;
+		*allvisfrac = 0;
+		return;
+	}
+
 	if (RELKIND_HAS_TABLE_AM(rel->rd_rel->relkind))
 	{
 		table_relation_estimate_size(rel, attr_widths, pages, tuples,
@@ -1391,6 +1413,10 @@ get_relation_statistics(RelOptInfo *rel, Relation relation)
 	List	   *statoidlist;
 	List	   *stainfos = NIL;
 	ListCell   *l;
+
+	/* YugaByte does not support forwarding statistics to Postgres yet */
+	if (IsYugaByteEnabled())
+		return NIL;
 
 	statoidlist = RelationGetStatExtList(relation);
 
@@ -2401,7 +2427,7 @@ find_partition_scheme(PlannerInfo *root, Relation relation)
 		palloc(sizeof(FmgrInfo) * partnatts);
 	for (i = 0; i < partnatts; i++)
 		fmgr_info_copy(&part_scheme->partsupfunc[i], &partkey->partsupfunc[i],
-					   CurrentMemoryContext);
+					   GetCurrentMemoryContext());
 
 	/* Add the partitioning scheme to PlannerInfo. */
 	root->part_schemes = lappend(root->part_schemes, part_scheme);

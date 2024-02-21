@@ -28,8 +28,14 @@
 #define PGSTAT_STAT_PERMANENT_FILENAME		"pg_stat/pgstat.stat"
 #define PGSTAT_STAT_PERMANENT_TMPFILE		"pg_stat/pgstat.tmp"
 
+#define PGSTAT_YBSTAT_PERMANENT_FILENAME    "pg_stat/yb_global.stat"
+#define PGSTAT_YBSTAT_PERMANENT_TMPFILE     "pg_stat/yb_global.tmp"
+
 /* Default directory to store temporary statistics data in */
 #define PG_STAT_TMP_DIR		"pg_stat_tmp"
+
+/* Caps the number of queries which can be stored in the array. */
+#define TERMINATED_QUERIES_SIZE 1000
 
 /* The types of statistics entries */
 typedef enum PgStat_Kind
@@ -87,6 +93,10 @@ typedef enum SessionEndType
  */
 typedef int64 PgStat_Counter;
 
+/* YB_TODO(neil)
+ * - "typedef enum StatMsgType" or MTYPE is obsolete.
+ * - Replace PGSTAT_MTYPE_ANALYZE must be reimplemented.
+ */
 
 /* ------------------------------------------------------------
  * Structures kept in backend local memory while accumulating counts
@@ -233,6 +243,65 @@ typedef struct PgStat_TableXactStatus
 	struct PgStat_TableXactStatus *next;	/* next of same subxact */
 } PgStat_TableXactStatus;
 
+
+/* YB_TODO(neil) This feature needs changes to match new implementation */
+#ifdef YB_TODO
+#define QUERY_TEXT_SIZE 		256
+#define QUERY_TERMINATION_SIZE	256
+typedef struct PgStat_MsgQueryTermination
+{
+	PgStat_MsgHdr m_hdr;
+
+	Oid m_st_userid;
+	Oid m_databaseoid;
+	int32 backend_pid;
+	TimestampTz activity_start_timestamp;
+	TimestampTz activity_end_timestamp;
+	char query_string[QUERY_TEXT_SIZE];
+	char termination_reason[QUERY_TERMINATION_SIZE];
+} PgStat_MsgQueryTermination;
+typedef union PgStat_Msg
+{
+	PgStat_MsgQueryTermination msg_querytermination;
+} PgStat_Msg;
+
+typedef struct PgStat_YBStatQueryEntry
+{
+	/*
+	 * query_oid is not an actual oid. It is an index that
+	 * represents its location in the array that stores the
+	 * terminated queries modulo TERMINATED_QUERIES_SIZE.
+	 */
+	Oid query_oid;
+
+	/*
+	 * We need to store the owner ID of the database for
+	 * security validation when the queries are fetched by the user.
+	 */
+	Oid st_userid;
+	Oid database_oid;
+	int32 backend_pid;
+	TimestampTz activity_start_timestamp;
+	TimestampTz activity_end_timestamp;
+
+	/*
+	 * query_string_size: records the length of the string
+	 * so that when writing this string to file, we only write
+	 * that many characters.
+	 */
+	size_t query_string_size;
+	char query_string[QUERY_TEXT_SIZE];
+
+	/*
+	 * termination_reason_size: records the length of the string
+	 * so that when writing this string to file, we only write
+	 * that many characters.
+	 */
+	size_t termination_reason_size;
+	char termination_reason[QUERY_TERMINATION_SIZE];
+} PgStat_YBStatQueryEntry;
+
+#endif
 
 /* ------------------------------------------------------------
  * Data structures on disk and in shared memory follow
@@ -386,6 +455,185 @@ typedef struct PgStat_StatTabEntry
 	PgStat_Counter autovac_analyze_count;
 } PgStat_StatTabEntry;
 
+#ifdef YB_TODO
+/* Postgres no longer uses the following structures. */
+
+/* ----------
+ * Wait Events - Timeout
+ *
+ * Use this category when a process is waiting for a timeout to expire.
+ * ----------
+ */
+typedef enum
+{
+	WAIT_EVENT_BASE_BACKUP_THROTTLE = PG_WAIT_TIMEOUT,
+	WAIT_EVENT_PG_SLEEP,
+	WAIT_EVENT_RECOVERY_APPLY_DELAY,
+	WAIT_EVENT_YB_TXN_CONFLICT_BACKOFF
+} WaitEventTimeout;
+
+/* ----------
+ * Command type for progress reporting purposes
+ * ----------
+ */
+typedef enum ProgressCommandType
+{
+	PROGRESS_COMMAND_INVALID,
+	PROGRESS_COMMAND_VACUUM,
+	PROGRESS_COMMAND_COPY,
+	PROGRESS_COMMAND_CREATE_INDEX
+} ProgressCommandType;
+
+#define PGSTAT_NUM_PROGRESS_PARAM	17
+
+#ifdef YB_TODO
+/*
+ * YbPgBackendCatalogVersionStatus
+ *
+ * Each live backend maintains a YbPgBackendCatalogVersionStatus struct in
+ * shared memory indicating what catalog version it is at.  A backend in the
+ * middle of a query or transaction uses a consistent snapshot of the system
+ * catalog (technically, only the cache does, not direct reads/writes to/from
+ * system catalog).  The catalog version indicates that snapshot.  has_version
+ * is false for backends that are idle (and not in txn) or non-client backends.
+ */
+typedef struct YbPgBackendCatalogVersionStatus
+{
+	bool		has_version;	/* whether the backend is using the following
+								   version */
+	uint64_t	version;		/* if has_version, catalog version that the
+								   backend is on */
+} YbPgBackendCatalogVersionStatus;
+
+
+/* YB_TODO(neil) Pg15 Move this to utils/backend_status.h ?? */
+/* ----------
+ * PgBackendStatus
+ *
+ * Each live backend maintains a PgBackendStatus struct in shared memory
+ * showing its current activity.  (The structs are allocated according to
+ * BackendId, but that is not critical.)  Note that the collector process
+ * has no involvement in, or even access to, these structs.
+ *
+ * Each auxiliary process also maintains a PgBackendStatus struct in shared
+ * memory.
+ * ----------
+ */
+typedef struct PgBackendStatus
+{
+	/*
+	 * To avoid locking overhead, we use the following protocol: a backend
+	 * increments st_changecount before modifying its entry, and again after
+	 * finishing a modification.  A would-be reader should note the value of
+	 * st_changecount, copy the entry into private memory, then check
+	 * st_changecount again.  If the value hasn't changed, and if it's even,
+	 * the copy is valid; otherwise start over.  This makes updates cheap
+	 * while reads are potentially expensive, but that's the tradeoff we want.
+	 *
+	 * The above protocol needs memory barriers to ensure that the apparent
+	 * order of execution is as it desires.  Otherwise, for example, the CPU
+	 * might rearrange the code so that st_changecount is incremented twice
+	 * before the modification on a machine with weak memory ordering.  Hence,
+	 * use the macros defined below for manipulating st_changecount, rather
+	 * than touching it directly.
+	 */
+	int			st_changecount;
+
+	/* The entry is valid iff st_procpid > 0, unused if st_procpid == 0 */
+	int			st_procpid;
+
+	/* Type of backends */
+	BackendType st_backendType;
+
+	/* Times when current backend, transaction, and activity started */
+	TimestampTz st_proc_start_timestamp;
+	TimestampTz st_xact_start_timestamp;
+	TimestampTz st_activity_start_timestamp;
+	TimestampTz st_state_start_timestamp;
+
+	/* Database OID, owning user's OID, connection client address */
+	Oid			st_databaseid;
+	Oid			st_userid;
+	SockAddr	st_clientaddr;
+	char	   *st_clienthostname;	/* MUST be null-terminated */
+	char 		*st_databasename; /* Used in YB Mode */
+
+	/* Information about SSL connection */
+	bool		st_ssl;
+	PgBackendSSLStatus *st_sslstatus;
+
+	/* current state */
+	BackendState st_state;
+
+	/* application name; MUST be null-terminated */
+	char	   *st_appname;
+
+	/*
+	 * Current command string; MUST be null-terminated. Note that this string
+	 * possibly is truncated in the middle of a multi-byte character. As
+	 * activity strings are stored more frequently than read, that allows to
+	 * move the cost of correct truncation to the display side. Use
+	 * pgstat_clip_activity() to truncate correctly.
+	 */
+	char	   *st_activity_raw;
+
+	/*
+	 * Command progress reporting.  Any command which wishes can advertise
+	 * that it is running by setting st_progress_command,
+	 * st_progress_command_target, and st_progress_param[].
+	 * st_progress_command_target should be the OID of the relation which the
+	 * command targets (we assume there's just one, as this is meant for
+	 * utility commands), but the meaning of each element in the
+	 * st_progress_param array is command-specific.
+	 */
+	ProgressCommandType st_progress_command;
+	Oid			st_progress_command_target;
+	int64		st_progress_param[PGSTAT_NUM_PROGRESS_PARAM];
+
+	/*
+	 * Memory usage of backend from TCMalloc, including PostgreSQL memory usage
+	 * + pggate memory usage + cached memory - memory that was freed but not recycled
+	 */
+	int64_t yb_st_allocated_mem_bytes;
+
+	/* YB catalog version */
+	YbPgBackendCatalogVersionStatus yb_st_catalog_version;
+} PgBackendStatus;
+#endif
+
+/* ----------
+ * LocalPgBackendStatus
+ *
+ * When we build the backend status array, we use LocalPgBackendStatus to be
+ * able to add new values to the struct when needed without adding new fields
+ * to the shared memory. It contains the backend status as a first member.
+ * ----------
+ */
+typedef struct LocalPgBackendStatus
+{
+	/*
+	 * Local version of the backend status entry.
+	 */
+	PgBackendStatus backendStatus;
+
+	/*
+	 * The xid of the current transaction if available, InvalidTransactionId
+	 * if not.
+	 */
+	TransactionId backend_xid;
+
+	/*
+	 * The xmin of the current session if available, InvalidTransactionId if
+	 * not.
+	 */
+	TransactionId backend_xmin;
+
+	/* Backend's RSS memory usage */
+	int64_t yb_backend_rss_mem_bytes;
+} LocalPgBackendStatus;
+
+#endif
+
 typedef struct PgStat_WalStats
 {
 	PgStat_Counter wal_records;
@@ -398,7 +646,6 @@ typedef struct PgStat_WalStats
 	PgStat_Counter wal_sync_time;
 	TimestampTz stat_reset_timestamp;
 } PgStat_WalStats;
-
 
 /*
  * Functions in pgstat.c
@@ -432,14 +679,12 @@ extern TimestampTz pgstat_get_stat_snapshot_timestamp(bool *have_snapshot);
 extern PgStat_Kind pgstat_get_kind_from_str(char *kind_str);
 extern bool pgstat_have_entry(PgStat_Kind kind, Oid dboid, Oid objoid);
 
-
 /*
  * Functions in pgstat_archiver.c
  */
 
 extern void pgstat_report_archiver(const char *xlog, bool failed);
 extern PgStat_ArchiverStats *pgstat_fetch_stat_archiver(void);
-
 
 /*
  * Functions in pgstat_bgwriter.c
@@ -468,6 +713,12 @@ extern void pgstat_report_deadlock(void);
 extern void pgstat_report_checksum_failures_in_db(Oid dboid, int failurecount);
 extern void pgstat_report_checksum_failure(void);
 extern void pgstat_report_connect(Oid dboid);
+extern void yb_pgstat_clear_entry_pid(int pid);
+#ifdef YB_TODO
+/* Postgres changed the implemenation for stats. Need to rework. */
+extern void pgstat_report_query_termination(const char *termination_reason,
+											int32 backend_pid);
+#endif
 
 #define pgstat_count_buffer_read_time(n)							\
 	(pgStatBlockReadTime += (n))
@@ -487,7 +738,12 @@ extern PgStat_StatDBEntry *pgstat_fetch_stat_dbentry(Oid dbid);
 extern void pgstat_create_function(Oid proid);
 extern void pgstat_drop_function(Oid proid);
 
+/* YB_TODO(ted@yugabyte) Need to look at all related code every time we merge. */
 struct FunctionCallInfoBaseData;
+
+extern void pgstat_init_function_usage_org(struct FunctionCallInfoBaseData *fcinfo,
+										   PgStat_FunctionCallUsage *fcu);
+/* YB_TODO(neil) Need to remove Ted's call structure */
 extern void pgstat_init_function_usage(struct FunctionCallInfoBaseData *fcinfo,
 									   PgStat_FunctionCallUsage *fcu);
 extern void pgstat_end_function_usage(PgStat_FunctionCallUsage *fcu,
@@ -496,6 +752,46 @@ extern void pgstat_end_function_usage(PgStat_FunctionCallUsage *fcu,
 extern PgStat_StatFuncEntry *pgstat_fetch_stat_funcentry(Oid funcid);
 extern PgStat_BackendFunctionEntry *find_funcstat_entry(Oid func_id);
 
+#ifdef YB_TODO
+/* These functions are no longer used in Pg15 */
+/* ----------
+ * pgstat_report_wait_end_for_proc(PGPROC *proc) -
+ *
+ *	Called to report end of a wait for a specific process.
+ *
+ * NB: this *must* be able to survive being called before MyProc has been
+ * initialized.
+ * ----------
+ */
+static inline void
+pgstat_report_wait_end_for_proc(volatile PGPROC *proc)
+{
+	if (!pgstat_track_activities || !proc)
+		return;
+
+	/*
+	 * Since this is a four-byte field which is always read and written as
+	 * four-bytes, updates are atomic.
+	 */
+	proc->wait_event_info = 0;
+}
+
+
+/* ----------
+ * pgstat_report_wait_end() -
+ *
+ *	Called to report end of a wait.
+ *
+ * NB: this *must* be able to survive being called before MyProc has been
+ * initialized.
+ * ----------
+ */
+static inline void
+pgstat_report_wait_end(void)
+{
+	return pgstat_report_wait_end_for_proc(MyProc);
+}
+#endif
 
 /*
  * Functions in pgstat_relation.c
@@ -572,12 +868,10 @@ extern void pgstat_twophase_postcommit(TransactionId xid, uint16 info,
 									   void *recdata, uint32 len);
 extern void pgstat_twophase_postabort(TransactionId xid, uint16 info,
 									  void *recdata, uint32 len);
-
 extern PgStat_StatTabEntry *pgstat_fetch_stat_tabentry(Oid relid);
 extern PgStat_StatTabEntry *pgstat_fetch_stat_tabentry_ext(bool shared,
 														   Oid relid);
 extern PgStat_TableStatus *find_tabstat_entry(Oid rel_id);
-
 
 /*
  * Functions in pgstat_replslot.c
@@ -648,7 +942,14 @@ extern PgStat_WalStats *pgstat_fetch_stat_wal(void);
 extern PGDLLIMPORT bool pgstat_track_counts;
 extern PGDLLIMPORT int pgstat_track_functions;
 extern PGDLLIMPORT int pgstat_fetch_consistency;
+extern char *pgstat_ybstat_filename;
+extern char *pgstat_ybstat_tmpname;
 
+/*
+ * Metric to track number of sql connections established since
+ * postmaster started.
+ */
+extern uint64_t *yb_new_conn;
 
 /*
  * Variables in pgstat_bgwriter.c
@@ -695,5 +996,18 @@ extern PGDLLIMPORT SessionEndType pgStatSessionEndCause;
 /* updated directly by backends and background processes */
 extern PGDLLIMPORT PgStat_WalStats PendingWalStats;
 
+/* ----------
+ * YB functions called from backends
+ * ----------
+ */
+extern void yb_pgstat_report_allocated_mem_bytes(void);
+extern void yb_pgstat_set_catalog_version(uint64_t catalog_version);
+extern void yb_pgstat_set_has_catalog_version(bool has_catalog_version);
+
+#ifdef YB_TODO
+/* These functions need new implementation to match with Postgres 15. */
+extern PgBackendStatus *getBackendStatusArray(void);
+extern PgStat_YBStatQueryEntry *pgstat_fetch_ybstat_queries(Oid db_oid, size_t* num_queries);
+#endif
 
 #endif							/* PGSTAT_H */

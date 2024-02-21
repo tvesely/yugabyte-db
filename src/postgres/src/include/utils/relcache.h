@@ -73,6 +73,9 @@ extern void RelationGetExclusionInfo(Relation indexRelation,
 
 extern void RelationInitIndexAccessInfo(Relation relation);
 
+extern bool CheckIndexForUpdate(Oid indexoid,
+								const Bitmapset *updated_attrs, AttrNumber attr_offset);
+
 /* caller must include pg_publication.h */
 struct PublicationDesc;
 extern void RelationBuildPublicationDesc(Relation relation,
@@ -94,6 +97,11 @@ extern int	errtableconstraint(Relation rel, const char *conname);
 extern void RelationCacheInitialize(void);
 extern void RelationCacheInitializePhase2(void);
 extern void RelationCacheInitializePhase3(void);
+
+/*
+ * Preload relations cache
+ */
+extern void YBPreloadRelCache();
 
 /*
  * Routine to create a relcache entry for an about-to-be-created relation
@@ -124,6 +132,8 @@ extern void RelationForgetRelation(Oid rid);
 extern void RelationCacheInvalidateEntry(Oid relationId);
 
 extern void RelationCacheInvalidate(bool debug_discard);
+
+extern void YbRelationCacheInvalidate(void);
 
 extern void RelationCloseSmgrByOid(Oid relationId);
 

@@ -22,7 +22,7 @@ SUBDIRS = access backup bootstrap catalog parser commands executor \
 	main nodes optimizer partitioning port postmaster \
 	regex replication rewrite \
 	statistics storage tcop tsearch utils $(top_builddir)/src/timezone \
-	jit
+	jit ybgate
 
 include $(srcdir)/common.mk
 
@@ -55,16 +55,55 @@ ifeq ($(with_systemd),yes)
 LIBS += -lsystemd
 endif
 
+ifndef YB_BUILD_ROOT
+$(error YB_BUILD_ROOT is not set)
+endif
+# Do not append $(YB_PG_EXE_LD_FLAGS_AFTER_YB_LIBS) here. We will append it
+# later, after initializing SHLIB_LINK.
+LIBS += -L$(YB_BUILD_ROOT)/lib -lyb_util -lyb_pggate -lyb_pggate_util
+
+CCLD = $(CXX)
+
+# Shared library configuration (see Makefile_ybpostgres.shlib -- included below)
+PGFILEDESC = "Postgres shared library"
+NAME = yb_pgbackend
+YB_SO_MAJOR_VERSION= 1
+YB_SO_MINOR_VERSION= $(MAJORVERSION)
+
+# Use := for immediate variable expansion. Further changes to $(LIBS) must not affect
+# $(SHLIB_LINK).
+SHLIB_LINK := $(LIBS)
+
+# YB_PG_EXE_LD_FLAGS_AFTER_YB_LIBS should only be used for linking executables.
+LIBS += $(YB_PG_EXE_LD_FLAGS_AFTER_YB_LIBS)
+
+SHLIB_EXPORTS = exports.txt
+
+.NOTPARALLEL:
+
 ##########################################################################
 
-all: submake-libpgport submake-catalog-headers submake-utils-headers postgres $(POSTGRES_IMP)
+exports.txt:
+	cat exports-common.txt > $@
+ifneq ($(YB_DO_NOT_BUILD_TESTS), 1)
+	cat exports-test.txt >> $@
+endif
+
+all: submake-libpgport submake-catalog-headers submake-utils-headers postgres $(POSTGRES_IMP) all-lib
+
+# Shared-library target all-lib.
+# Depends on postgres build, and Makefile_ybpostgres.shlib will add the other
+# deps (e.g. all-shared-lib and/or all-static-lib).
+all-lib: postgres all-lib exports.txt
+include $(top_srcdir)/src/Makefile_ybpostgres.shlib
+
 
 ifneq ($(PORTNAME), cygwin)
 ifneq ($(PORTNAME), win32)
 ifneq ($(PORTNAME), aix)
 
 postgres: $(OBJS)
-	$(CC) $(CFLAGS) $(call expand_subsys,$^) $(LDFLAGS) $(LDFLAGS_EX) $(export_dynamic) $(LIBS) -o $@
+	$(CCLD) $(CFLAGS) $(call expand_subsys,$^) $(LDFLAGS) $(LDFLAGS_EX) $(export_dynamic) $(LIBS) -o $@
 
 endif
 endif
@@ -73,7 +112,7 @@ endif
 ifeq ($(PORTNAME), cygwin)
 
 postgres: $(OBJS)
-	$(CC) $(CFLAGS) $(call expand_subsys,$^) $(LDFLAGS) $(LDFLAGS_EX) $(export_dynamic) -Wl,--stack,$(WIN32_STACK_RLIMIT) -Wl,--export-all-symbols -Wl,--out-implib=libpostgres.a $(LIBS) -o $@
+	$(CCLD) $(CFLAGS) $(call expand_subsys,$^) $(LDFLAGS) $(LDFLAGS_EX) $(export_dynamic) -Wl,--stack,$(WIN32_STACK_RLIMIT) -Wl,--export-all-symbols -Wl,--out-implib=libpostgres.a $(LIBS) -o $@
 
 # libpostgres.a is actually built in the preceding rule, but we need this to
 # ensure it's newer than postgres; see notes in src/backend/parser/Makefile
@@ -86,7 +125,7 @@ ifeq ($(PORTNAME), win32)
 LIBS += -lsecur32
 
 postgres: $(OBJS) $(WIN32RES)
-	$(CC) $(CFLAGS) $(call expand_subsys,$(OBJS)) $(WIN32RES) $(LDFLAGS) $(LDFLAGS_EX) -Wl,--stack=$(WIN32_STACK_RLIMIT) -Wl,--export-all-symbols -Wl,--out-implib=libpostgres.a $(LIBS) -o $@$(X)
+	$(CCLD) $(CFLAGS) $(call expand_subsys,$(OBJS)) $(WIN32RES) $(LDFLAGS) $(LDFLAGS_EX) -Wl,--stack=$(WIN32_STACK_RLIMIT) -Wl,--export-all-symbols -Wl,--out-implib=libpostgres.a $(LIBS) -o $@$(X)
 
 # libpostgres.a is actually built in the preceding rule, but we need this to
 # ensure it's newer than postgres; see notes in src/backend/parser/Makefile
@@ -98,7 +137,7 @@ endif # win32
 ifeq ($(PORTNAME), aix)
 
 postgres: $(POSTGRES_IMP)
-	$(CC) $(CFLAGS) $(call expand_subsys,$(OBJS)) $(LDFLAGS) $(LDFLAGS_EX) -Wl,-bE:$(top_builddir)/src/backend/$(POSTGRES_IMP) $(LIBS) -Wl,-brtllib -o $@
+	$(CCLD) $(CFLAGS) $(call expand_subsys,$(OBJS)) $(LDFLAGS) $(LDFLAGS_EX) -Wl,-bE:$(top_builddir)/src/backend/$(POSTGRES_IMP) $(LIBS) -Wl,-brtllib -o $@
 
 $(POSTGRES_IMP): $(OBJS)
 	$(LD) $(LDREL) $(LDOUT) SUBSYS.o $(call expand_subsys,$^)
@@ -195,7 +234,7 @@ distprep:
 
 ##########################################################################
 
-install: all installdirs install-bin
+install: all installdirs install-bin install-lib
 ifeq ($(PORTNAME), cygwin)
 ifeq ($(MAKE_DLL), true)
 	$(INSTALL_DATA) libpostgres.a '$(DESTDIR)$(libdir)/libpostgres.a'

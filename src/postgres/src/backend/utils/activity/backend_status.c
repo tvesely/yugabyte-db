@@ -25,6 +25,9 @@
 #include "utils/guc.h"			/* for application_name */
 #include "utils/memutils.h"
 
+/* Yugabyte includes */
+#include "pg_yb_utils.h"
+#include "utils/syscache.h"
 
 /* ----------
  * Total number of backends including auxiliary
@@ -48,7 +51,7 @@ int			pgstat_track_activity_query_size = 1024;
 
 /* exposed so that backend_progress.c can access it */
 PgBackendStatus *MyBEEntry = NULL;
-
+static char *DatabaseNameBuffer = NULL;
 
 static PgBackendStatus *BackendStatusArray = NULL;
 static char *BackendAppnameBuffer = NULL;
@@ -61,7 +64,6 @@ static PgBackendSSLStatus *BackendSslStatusBuffer = NULL;
 #ifdef ENABLE_GSS
 static PgBackendGSSStatus *BackendGssStatusBuffer = NULL;
 #endif
-
 
 /* Status for backends including auxiliary */
 static LocalPgBackendStatus *localBackendStatusTable = NULL;
@@ -106,6 +108,7 @@ BackendStatusShmemSize(void)
 	size = add_size(size,
 					mul_size(sizeof(PgBackendGSSStatus), NumBackendStatSlots));
 #endif
+	size = add_size(size, mul_size(NAMEDATALEN, NumBackendStatSlots));
 	return size;
 }
 
@@ -188,6 +191,26 @@ CreateSharedBackendStatus(void)
 		{
 			BackendStatusArray[i].st_activity_raw = buffer;
 			buffer += pgstat_track_activity_query_size;
+		}
+	}
+
+	if (YBIsEnabledInPostgresEnvVar()) {
+		Size DatabaseNameBufferSize;
+		DatabaseNameBufferSize = mul_size(NAMEDATALEN, NumBackendStatSlots);
+		DatabaseNameBuffer = (char *)
+			ShmemInitStruct("Database Name Buffer", DatabaseNameBufferSize, &found);
+
+		if (!found)
+		{
+			MemSet(DatabaseNameBuffer, 0, DatabaseNameBufferSize);
+
+			/* Initialize st_databasename pointers. */
+			buffer = DatabaseNameBuffer;
+			for (i = 0; i < NumBackendStatSlots; i++)
+			{
+				BackendStatusArray[i].st_databasename = buffer;
+				buffer += NAMEDATALEN;
+			}
 		}
 	}
 
@@ -338,6 +361,15 @@ pgstat_bestart(void)
 	lbeentry.st_xact_start_timestamp = 0;
 	lbeentry.st_databaseid = MyDatabaseId;
 
+	if (YBIsEnabledInPostgresEnvVar() && lbeentry.st_databaseid > 0) {
+		HeapTuple tuple;
+		tuple = SearchSysCache1(DATABASEOID, ObjectIdGetDatum(lbeentry.st_databaseid));
+		Form_pg_database dbForm;
+		dbForm = (Form_pg_database) GETSTRUCT(tuple);
+		strcpy(lbeentry.st_databasename, dbForm->datname.data);
+		ReleaseSysCache(tuple);
+	}
+
 	/* We have userid for client-backends, wal-sender and bgworker processes */
 	if (lbeentry.st_backendType == B_BACKEND
 		|| lbeentry.st_backendType == B_WAL_SENDER
@@ -467,6 +499,7 @@ pgstat_beshutdown_hook(int code, Datum arg)
 	PGSTAT_BEGIN_WRITE_ACTIVITY(beentry);
 
 	beentry->st_procpid = 0;	/* mark invalid */
+	beentry->yb_session_id = 0;
 
 	PGSTAT_END_WRITE_ACTIVITY(beentry);
 
@@ -544,6 +577,7 @@ pgstat_report_activity(BackendState state, const char *cmd_str)
 			PGSTAT_BEGIN_WRITE_ACTIVITY(beentry);
 			beentry->st_state = STATE_DISABLED;
 			beentry->st_state_start_timestamp = 0;
+			beentry->yb_new_conn = 0;
 			beentry->st_activity_raw[0] = '\0';
 			beentry->st_activity_start_timestamp = 0;
 			/* st_xact_start_timestamp and wait_event_info are also disabled */
@@ -1147,4 +1181,117 @@ pgstat_clip_activity(const char *raw_activity)
 	activity[cliplen] = '\0';
 
 	return activity;
+}
+
+/*
+ * When backends die due to abnormal termination, cleanup is required.
+ *
+ * This function performs all the operations done by pgstat_beshutdown_hook,
+ * which is executed during safe backend terminations. However, it does not
+ * report the remaining stats to the pgstat collector as the backend has
+ * already died.
+ */
+void
+yb_pgstat_clear_entry_pid(int pid)
+{
+	PgBackendStatus *beentry;
+	int			i;
+
+	beentry = BackendStatusArray;
+	for (i = 1; i <= MaxBackends; i++)
+	{
+		volatile PgBackendStatus *vbeentry = beentry;
+
+		if (pid == vbeentry->st_procpid)
+		{
+			PGSTAT_BEGIN_WRITE_ACTIVITY(beentry);
+			beentry->st_procpid = 0;	/* mark invalid */
+			beentry->yb_session_id = 0;
+			PGSTAT_END_WRITE_ACTIVITY(beentry);
+			return;
+		}
+		beentry++;
+	}
+}
+
+/* ----------
+ * yb_pgstat_report_allocated_mem_bytes() -
+ *
+ *	Called from utils/mmgr/mcxt.c to update our allocated memory measurement
+ *	value
+ * ----------
+ */
+void
+yb_pgstat_report_allocated_mem_bytes(void)
+{
+	volatile PgBackendStatus *beentry = MyBEEntry;
+
+	if (!beentry)
+		return;
+
+	PGSTAT_BEGIN_WRITE_ACTIVITY(beentry);
+
+	beentry->yb_st_allocated_mem_bytes = PgMemTracker.backend_cur_allocated_mem_bytes;
+
+	PGSTAT_END_WRITE_ACTIVITY(beentry);
+}
+
+/* ----------
+ * yb_pgstat_set_catalog_version() -
+ *
+ *		Set yb_st_catalog_version.version for my backend
+ * ----------
+ */
+void
+yb_pgstat_set_catalog_version(uint64_t catalog_version)
+{
+	volatile PgBackendStatus *vbeentry = MyBEEntry;
+
+	PGSTAT_BEGIN_WRITE_ACTIVITY(vbeentry);
+
+	vbeentry->yb_st_catalog_version.version = catalog_version;
+
+	PGSTAT_END_WRITE_ACTIVITY(vbeentry);
+}
+
+/* ----------
+ * yb_pgstat_set_has_catalog_version() -
+ *
+ *		Set yb_st_catalog_version.has_version for my backend
+ * ----------
+ */
+void
+yb_pgstat_set_has_catalog_version(bool has_version)
+{
+	volatile PgBackendStatus *vbeentry = MyBEEntry;
+
+	PGSTAT_BEGIN_WRITE_ACTIVITY(vbeentry);
+
+	vbeentry->yb_st_catalog_version.has_version = has_version;
+
+	PGSTAT_END_WRITE_ACTIVITY(vbeentry);
+}
+
+void
+yb_pgstat_add_session_info(uint64_t session_id)
+{
+	volatile PgBackendStatus *vbeentry = NULL;
+
+	/* This code could be invoked either in a regular backend or in an
+	 * auxiliary process. In case of the latter, skip initializing shared
+	 * memory context. See note in pgstat_initalize() */
+	if (MyBEEntry == NULL)
+	{
+		/* Must be an auxiliary process */
+		Assert(MyAuxProcType != NotAnAuxProcess);
+		return;
+	}
+
+	vbeentry = MyBEEntry;
+
+	PGSTAT_BEGIN_WRITE_ACTIVITY(vbeentry);
+
+	vbeentry->yb_session_id = session_id;
+
+	PGSTAT_END_WRITE_ACTIVITY(vbeentry);
 }

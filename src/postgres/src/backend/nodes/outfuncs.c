@@ -333,6 +333,7 @@ _outPlannedStmt(StringInfo str, const PlannedStmt *node)
 	WRITE_NODE_FIELD(utilityStmt);
 	WRITE_LOCATION_FIELD(stmt_location);
 	WRITE_INT_FIELD(stmt_len);
+	WRITE_INT_FIELD(yb_num_referenced_relations);
 }
 
 /*
@@ -437,6 +438,14 @@ _outModifyTable(StringInfo str, const ModifyTable *node)
 	WRITE_UINT_FIELD(exclRelRTI);
 	WRITE_NODE_FIELD(exclRelTlist);
 	WRITE_NODE_FIELD(mergeActionLists);
+
+	WRITE_NODE_FIELD(ybPushdownTlist);
+	WRITE_NODE_FIELD(ybReturningColumns);
+	WRITE_NODE_FIELD(ybColumnRefs);
+	WRITE_NODE_FIELD(no_update_index_list);
+	WRITE_BOOL_FIELD(no_row_trigger);
+	WRITE_BOOL_FIELD(ybUseScanTupleInUpdate);
+	WRITE_BOOL_FIELD(ybHasWholeRowAttribute);
 }
 
 static void
@@ -554,6 +563,16 @@ _outSeqScan(StringInfo str, const SeqScan *node)
 }
 
 static void
+_outYbSeqScan(StringInfo str, const YbSeqScan *node)
+{
+	WRITE_NODE_TYPE("YBSEQSCAN");
+
+	_outScanInfo(str, (const Scan *) node);
+	WRITE_NODE_FIELD(yb_pushdown.quals);
+	WRITE_NODE_FIELD(yb_pushdown.colrefs);
+}
+
+static void
 _outSampleScan(StringInfo str, const SampleScan *node)
 {
 	WRITE_NODE_TYPE("SAMPLESCAN");
@@ -576,7 +595,14 @@ _outIndexScan(StringInfo str, const IndexScan *node)
 	WRITE_NODE_FIELD(indexorderby);
 	WRITE_NODE_FIELD(indexorderbyorig);
 	WRITE_NODE_FIELD(indexorderbyops);
+	WRITE_NODE_FIELD(indextlist);
 	WRITE_ENUM_FIELD(indexorderdir, ScanDirection);
+	WRITE_NODE_FIELD(yb_idx_pushdown.quals);
+	WRITE_NODE_FIELD(yb_idx_pushdown.colrefs);
+	WRITE_NODE_FIELD(yb_rel_pushdown.quals);
+	WRITE_NODE_FIELD(yb_rel_pushdown.colrefs);
+	WRITE_INT_FIELD(yb_distinct_prefixlen);
+	WRITE_ENUM_FIELD(yb_lock_mechanism, YbLockMechanism);
 }
 
 static void
@@ -592,6 +618,9 @@ _outIndexOnlyScan(StringInfo str, const IndexOnlyScan *node)
 	WRITE_NODE_FIELD(indexorderby);
 	WRITE_NODE_FIELD(indextlist);
 	WRITE_ENUM_FIELD(indexorderdir, ScanDirection);
+	WRITE_NODE_FIELD(yb_pushdown.quals);
+	WRITE_NODE_FIELD(yb_pushdown.colrefs);
+	WRITE_INT_FIELD(yb_distinct_prefixlen);
 }
 
 static void
@@ -762,6 +791,30 @@ _outNestLoop(StringInfo str, const NestLoop *node)
 	_outJoinPlanInfo(str, (const Join *) node);
 
 	WRITE_NODE_FIELD(nestParams);
+}
+
+static void
+_outYbBatchedNestLoop(StringInfo str, const YbBatchedNestLoop *node)
+{
+	WRITE_NODE_TYPE("YBBATCHEDNESTLOOP");
+
+	_outJoinPlanInfo(str, (const Join *) node);
+	WRITE_NODE_FIELD(nl.nestParams);
+	WRITE_INT_FIELD(num_hashClauseInfos);
+	appendStringInfoString(str, " :hashOps");
+	for (int i = 0; i < node->num_hashClauseInfos; i++)
+		appendStringInfo(str, " %u", node->hashClauseInfos[i].hashOp);
+
+	appendStringInfoString(str, " :innerHashAttNos");
+	for (int i = 0; i < node->num_hashClauseInfos; i++)
+		appendStringInfo(str, " %d", node->hashClauseInfos[i].innerHashAttNo);
+
+	appendStringInfoString(str, " :outerParamExprs");
+	for (int i = 0; i < node->num_hashClauseInfos; i++)
+	{
+		appendStringInfoString(str, " ");
+		outNode(str, node->hashClauseInfos[i].outerParamExpr);
+	}
 }
 
 static void
@@ -993,6 +1046,7 @@ _outNestLoopParam(StringInfo str, const NestLoopParam *node)
 
 	WRITE_INT_FIELD(paramno);
 	WRITE_NODE_FIELD(paramval);
+	WRITE_INT_FIELD(yb_batch_size);
 }
 
 static void
@@ -1045,6 +1099,16 @@ _outPartitionPruneStepOp(StringInfo str, const PartitionPruneStepOp *node)
 	WRITE_NODE_FIELD(exprs);
 	WRITE_NODE_FIELD(cmpfns);
 	WRITE_BITMAPSET_FIELD(nullkeys);
+}
+
+static void
+_outPartitionPruneStepFuncOp(StringInfo str,
+							   const PartitionPruneStepFuncOp *node)
+{
+	WRITE_NODE_TYPE("PARTITIONPRUNESTEPFUNCOP");
+
+	WRITE_INT_FIELD(step.step_id);
+	WRITE_NODE_FIELD(exprs);
 }
 
 static void
@@ -1147,6 +1211,13 @@ _outVar(StringInfo str, const Var *node)
 	WRITE_UINT_FIELD(varnosyn);
 	WRITE_INT_FIELD(varattnosyn);
 	WRITE_LOCATION_FIELD(location);
+}
+
+static void
+_outYbBatchedExpr(StringInfo str, const YbBatchedExpr *node)
+{
+	WRITE_NODE_TYPE("BATCHEDEXPR");
+	outNode(str, node->orig_expr);
 }
 
 static void
@@ -1838,6 +1909,7 @@ _outIndexPath(StringInfo str, const IndexPath *node)
 	WRITE_ENUM_FIELD(indexscandir, ScanDirection);
 	WRITE_FLOAT_FIELD(indextotalcost, "%.2f");
 	WRITE_FLOAT_FIELD(indexselectivity, "%.4f");
+	WRITE_ENUM_FIELD(yb_index_path_info.yb_lock_mechanism, YbLockMechanism);
 }
 
 static void
@@ -2736,6 +2808,7 @@ _outCreateStmtInfo(StringInfo str, const CreateStmt *node)
 	WRITE_STRING_FIELD(tablespacename);
 	WRITE_STRING_FIELD(accessMethod);
 	WRITE_BOOL_FIELD(if_not_exists);
+	WRITE_NODE_FIELD(split_options);
 }
 
 static void
@@ -3754,6 +3827,7 @@ _outConstraint(StringInfo str, const Constraint *node)
 			WRITE_STRING_FIELD(indexname);
 			WRITE_STRING_FIELD(indexspace);
 			WRITE_BOOL_FIELD(reset_default_tblspc);
+			WRITE_NODE_FIELD(yb_index_params);
 			/* access_method and where_clause not currently used */
 			break;
 
@@ -3880,6 +3954,17 @@ _outPartitionRangeDatum(StringInfo str, const PartitionRangeDatum *node)
 	WRITE_LOCATION_FIELD(location);
 }
 
+static void
+_outYbExprColrefDesc(StringInfo str, const YbExprColrefDesc *node)
+{
+	WRITE_NODE_TYPE("YBEXPRCOLREFDESC");
+
+	WRITE_INT_FIELD(attno);
+	WRITE_OID_FIELD(typid);
+	WRITE_INT_FIELD(typmod);
+	WRITE_OID_FIELD(collid);
+}
+
 /*
  * outNode -
  *	  converts a Node into ascii string and append it to 'str'
@@ -3952,6 +4037,9 @@ outNode(StringInfo str, const void *obj)
 			case T_SeqScan:
 				_outSeqScan(str, obj);
 				break;
+			case T_YbSeqScan:
+				_outYbSeqScan(str, obj);
+				break;
 			case T_SampleScan:
 				_outSampleScan(str, obj);
 				break;
@@ -4005,6 +4093,9 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_NestLoop:
 				_outNestLoop(str, obj);
+				break;
+			case T_YbBatchedNestLoop:
+				_outYbBatchedNestLoop(str, obj);
 				break;
 			case T_MergeJoin:
 				_outMergeJoin(str, obj);
@@ -4083,6 +4174,9 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_Var:
 				_outVar(str, obj);
+				break;
+			case T_YbBatchedExpr:
+				_outYbBatchedExpr(str, obj);
 				break;
 			case T_Const:
 				_outConst(str, obj);
@@ -4587,6 +4681,9 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_PartitionRangeDatum:
 				_outPartitionRangeDatum(str, obj);
+				break;
+			case T_YbExprColrefDesc:
+				_outYbExprColrefDesc(str, obj);
 				break;
 
 			default:

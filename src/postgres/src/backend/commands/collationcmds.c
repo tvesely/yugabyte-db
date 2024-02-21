@@ -37,6 +37,7 @@
 #include "utils/rel.h"
 #include "utils/syscache.h"
 
+#include "pg_yb_utils.h"
 
 typedef struct
 {
@@ -645,6 +646,12 @@ pg_import_system_collations(PG_FUNCTION_ARGS)
 				elog(DEBUG1, "skipping locale with non-ASCII name: \"%s\"", localebuf);
 				continue;
 			}
+
+			/*
+			 * For libc, Yugabyte only supports the basic locales.
+			 */
+			if (IsYugaByteEnabled() && !YBIsSupportedLibcLocale(localebuf))
+				continue;
 
 			enc = pg_get_encoding_from_locale(localebuf, false);
 			if (enc < 0)

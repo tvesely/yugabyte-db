@@ -21,6 +21,7 @@
  * allpaths.c
  */
 extern PGDLLIMPORT bool enable_geqo;
+extern PGDLLIMPORT bool yb_enable_optimizer_statistics;
 extern PGDLLIMPORT int geqo_threshold;
 extern PGDLLIMPORT int min_parallel_table_scan_size;
 extern PGDLLIMPORT int min_parallel_index_scan_size;
@@ -92,6 +93,14 @@ extern void create_tidscan_paths(PlannerInfo *root, RelOptInfo *rel);
  * joinpath.c
  *	   routines to create join paths
  */
+extern Relids yb_get_batched_relids(NestPath *nest);
+
+extern Relids yb_get_unbatched_relids(NestPath *nest);
+
+extern bool yb_is_outer_inner_batched(Path *outer, Path *inner);
+
+extern bool yb_is_nestloop_batched(NestPath *nest);
+
 extern void add_paths_to_joinrel(PlannerInfo *root, RelOptInfo *joinrel,
 								 RelOptInfo *outerrel, RelOptInfo *innerrel,
 								 JoinType jointype, SpecialJoinInfo *sjinfo,
@@ -212,7 +221,7 @@ extern Path *get_cheapest_fractional_path_for_pathkeys(List *paths,
 													   double fraction);
 extern Path *get_cheapest_parallel_safe_total_inner(List *paths);
 extern List *build_index_pathkeys(PlannerInfo *root, IndexOptInfo *index,
-								  ScanDirection scandir);
+								  ScanDirection scandir, int *yb_distinct_nkeys);
 extern List *build_partition_pathkeys(PlannerInfo *root, RelOptInfo *partrel,
 									  ScanDirection scandir, bool *partialkeys);
 extern List *build_expression_pathkey(PlannerInfo *root, Expr *expr,
@@ -246,12 +255,22 @@ extern List *trim_mergeclauses_for_inner_pathkeys(PlannerInfo *root,
 												  List *pathkeys);
 extern List *truncate_useless_pathkeys(PlannerInfo *root,
 									   RelOptInfo *rel,
-									   List *pathkeys);
+									   List *pathkeys,
+									   int yb_distinct_nkeys);
 extern bool has_useful_pathkeys(PlannerInfo *root, RelOptInfo *rel);
 extern PathKey *make_canonical_pathkey(PlannerInfo *root,
 									   EquivalenceClass *eclass, Oid opfamily,
 									   int strategy, bool nulls_first);
 extern void add_paths_to_append_rel(PlannerInfo *root, RelOptInfo *rel,
 									List *live_childrels);
+extern bool yb_reject_distinct_pushdown(Node *expr);
+extern List *yb_get_uniqkeys(IndexOptInfo *index, int prefixlen);
+extern int yb_calculate_distinct_prefixlen(PlannerInfo *root,
+										   IndexOptInfo *index,
+										   List *index_clauses);
+extern bool yb_has_sufficient_uniqkeys(PlannerInfo *root, Path *pathnode);
+extern List *yb_get_ecs_for_query_uniqkeys(PlannerInfo *root);
+
+extern Path *get_singleton_append_subpath(Path *path);
 
 #endif							/* PATHS_H */

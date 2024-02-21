@@ -12,6 +12,8 @@
  *
  *-------------------------------------------------------------------------
  */
+
+#include <pg_yb_utils.h>
 #include "postgres.h"
 
 #include <sys/param.h>
@@ -54,7 +56,7 @@
 #include "utils/pidfile.h"
 #include "utils/syscache.h"
 #include "utils/varlena.h"
-
+#include "yb_ysql_conn_mgr_helper.h"
 
 #define DIRECTORY_LOCK_FILE		"postmaster.pid"
 
@@ -373,7 +375,7 @@ checkDataDir(void)
 	 */
 #if !defined(WIN32) && !defined(__CYGWIN__)
 	if (stat_buf.st_mode & PG_MODE_MASK_GROUP)
-		ereport(FATAL,
+		ereport(WARNING,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 				 errmsg("data directory \"%s\" has invalid permissions",
 						DataDir),
@@ -834,8 +836,14 @@ SetSessionAuthorization(Oid userid, bool is_superuser)
 	/* Must have authenticated already, else can't make permission check */
 	AssertState(OidIsValid(AuthenticatedUserId));
 
-	if (userid != AuthenticatedUserId &&
-		!AuthenticatedUserIsSuperuser)
+	if ((userid != AuthenticatedUserId && !AuthenticatedUserIsSuperuser) &&
+		/*
+		* For YB Managed case, throw an error if:
+		* 1. Caller is not a yb_db_admin member
+		* 2. Caller is trying to set itself as yb_db_admin member or superuser.
+		*/
+		(!IsYbDbAdminUserNosuper(AuthenticatedUserId) ||
+		(IsYbDbAdminUserNosuper(AuthenticatedUserId) && superuser_arg(userid))))
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 errmsg("permission denied to set session authorization")));
@@ -1729,4 +1737,18 @@ pg_bindtextdomain(const char *domain)
 		pg_bind_textdomain_codeset(domain);
 	}
 #endif
+}
+
+void YbSetUserContext(const Oid roleid, const bool is_superuser, const char *rname){
+	/* change the auth user */
+	AuthenticatedUserId = roleid;
+	AuthenticatedUserIsSuperuser = is_superuser;
+
+	SetSessionUserId(roleid, is_superuser);
+
+	SetConfigOption("session_authorization", rname,
+					PGC_INTERNAL, PGC_S_OVERRIDE);
+	SetConfigOption("is_superuser",
+					is_superuser ? "on" : "off",
+					PGC_INTERNAL, PGC_S_OVERRIDE);
 }

@@ -1637,6 +1637,7 @@ _readPlannedStmt(void)
 	READ_NODE_FIELD(paramExecTypes);
 	READ_NODE_FIELD(utilityStmt);
 	READ_LOCATION_FIELD(stmt_location);
+	READ_INT_FIELD(yb_num_referenced_relations);
 	READ_INT_FIELD(stmt_len);
 
 	READ_DONE();
@@ -1740,6 +1741,14 @@ _readModifyTable(void)
 	READ_UINT_FIELD(exclRelRTI);
 	READ_NODE_FIELD(exclRelTlist);
 	READ_NODE_FIELD(mergeActionLists);
+
+	READ_NODE_FIELD(ybPushdownTlist);
+	READ_NODE_FIELD(ybReturningColumns);
+	READ_NODE_FIELD(ybColumnRefs);
+	READ_NODE_FIELD(no_update_index_list);
+	READ_BOOL_FIELD(no_row_trigger);
+	READ_BOOL_FIELD(ybUseScanTupleInUpdate);
+	READ_BOOL_FIELD(ybHasWholeRowAttribute);
 
 	READ_DONE();
 }
@@ -1877,6 +1886,22 @@ _readSeqScan(void)
 }
 
 /*
+ * _readYbSeqScan
+ */
+static YbSeqScan *
+_readYbSeqScan(void)
+{
+	READ_LOCALS(YbSeqScan);
+
+	ReadCommonScan(&local_node->scan);
+
+	READ_NODE_FIELD(yb_pushdown.quals);
+	READ_NODE_FIELD(yb_pushdown.colrefs);
+
+	READ_DONE();
+}
+
+/*
  * _readSampleScan
  */
 static SampleScan *
@@ -1907,7 +1932,14 @@ _readIndexScan(void)
 	READ_NODE_FIELD(indexorderby);
 	READ_NODE_FIELD(indexorderbyorig);
 	READ_NODE_FIELD(indexorderbyops);
+	READ_NODE_FIELD(indextlist);
 	READ_ENUM_FIELD(indexorderdir, ScanDirection);
+	READ_NODE_FIELD(yb_idx_pushdown.quals);
+	READ_NODE_FIELD(yb_idx_pushdown.colrefs);
+	READ_NODE_FIELD(yb_rel_pushdown.quals);
+	READ_NODE_FIELD(yb_rel_pushdown.colrefs);
+	READ_INT_FIELD(yb_distinct_prefixlen);
+	READ_ENUM_FIELD(yb_lock_mechanism, YbLockMechanism);
 
 	READ_DONE();
 }
@@ -1928,6 +1960,9 @@ _readIndexOnlyScan(void)
 	READ_NODE_FIELD(indexorderby);
 	READ_NODE_FIELD(indextlist);
 	READ_ENUM_FIELD(indexorderdir, ScanDirection);
+	READ_NODE_FIELD(yb_pushdown.quals);
+	READ_NODE_FIELD(yb_pushdown.colrefs);
+	READ_INT_FIELD(yb_distinct_prefixlen);
 
 	READ_DONE();
 }
@@ -2195,6 +2230,45 @@ _readNestLoop(void)
 	ReadCommonJoin(&local_node->join);
 
 	READ_NODE_FIELD(nestParams);
+
+	READ_DONE();
+}
+
+/*
+ * _readYbBatchedNestLoop
+ */
+static YbBatchedNestLoop *
+_readYbBatchedNestLoop(void)
+{
+	READ_LOCALS(YbBatchedNestLoop);
+
+	ReadCommonJoin(&local_node->nl.join);
+
+	READ_NODE_FIELD(nl.nestParams);
+	READ_INT_FIELD(num_hashClauseInfos);
+	local_node->hashClauseInfos =
+		palloc0(local_node->num_hashClauseInfos * sizeof(YbBNLHashClauseInfo));
+
+	/* Ignore :hashOps */
+	pg_strtok(&length);
+	for (int i = 0; i < local_node->num_hashClauseInfos; i++)
+	{
+		token = pg_strtok(&length);
+		local_node->hashClauseInfos[i].hashOp = atoi(token);
+	}
+
+	/* Ignore :innerHashAttNos */
+	pg_strtok(&length);
+	for (int i = 0; i < local_node->num_hashClauseInfos; i++)
+	{
+		token = pg_strtok(&length);
+		local_node->hashClauseInfos[i].innerHashAttNo = atoi(token);
+	}
+
+	/* Ignore :outerParamExprs */
+	pg_strtok(&length);
+	for (int i = 0; i < local_node->num_hashClauseInfos; i++)
+		local_node->hashClauseInfos[i].outerParamExpr = nodeRead(NULL, 0);
 
 	READ_DONE();
 }
@@ -2548,6 +2622,7 @@ _readNestLoopParam(void)
 
 	READ_INT_FIELD(paramno);
 	READ_NODE_FIELD(paramval);
+	READ_INT_FIELD(yb_batch_size);
 
 	READ_DONE();
 }
@@ -2611,6 +2686,17 @@ _readPartitionPruneStepOp(void)
 	READ_NODE_FIELD(exprs);
 	READ_NODE_FIELD(cmpfns);
 	READ_BITMAPSET_FIELD(nullkeys);
+
+	READ_DONE();
+}
+
+static PartitionPruneStepFuncOp *
+_readPartitionPruneStepFuncOp(void)
+{
+	READ_LOCALS(PartitionPruneStepFuncOp);
+
+	READ_INT_FIELD(step.step_id);
+	READ_NODE_FIELD(exprs);
 
 	READ_DONE();
 }
@@ -2743,6 +2829,22 @@ _readPartitionRangeDatum(void)
 	READ_ENUM_FIELD(kind, PartitionRangeDatumKind);
 	READ_NODE_FIELD(value);
 	READ_LOCATION_FIELD(location);
+
+	READ_DONE();
+}
+
+/*
+ * _readYbExprParamDesc
+ */
+static YbExprColrefDesc *
+_readYbExprColrefDesc(void)
+{
+	READ_LOCALS(YbExprColrefDesc);
+
+	READ_INT_FIELD(attno);
+	READ_OID_FIELD(typid);
+	READ_INT_FIELD(typmod);
+	READ_OID_FIELD(collid);
 
 	READ_DONE();
 }
@@ -2930,6 +3032,8 @@ parseNodeString(void)
 		return_value = _readScan();
 	else if (MATCH("SEQSCAN", 7))
 		return_value = _readSeqScan();
+	else if (MATCH("YBSEQSCAN", 9))
+		return_value = _readYbSeqScan();
 	else if (MATCH("SAMPLESCAN", 10))
 		return_value = _readSampleScan();
 	else if (MATCH("INDEXSCAN", 9))
@@ -2966,6 +3070,8 @@ parseNodeString(void)
 		return_value = _readJoin();
 	else if (MATCH("NESTLOOP", 8))
 		return_value = _readNestLoop();
+	else if (MATCH("YBBATCHEDNESTLOOP", 17))
+		return_value = _readYbBatchedNestLoop();
 	else if (MATCH("MERGEJOIN", 9))
 		return_value = _readMergeJoin();
 	else if (MATCH("HASHJOIN", 8))
@@ -3022,6 +3128,8 @@ parseNodeString(void)
 		return_value = _readPartitionBoundSpec();
 	else if (MATCH("PARTITIONRANGEDATUM", 19))
 		return_value = _readPartitionRangeDatum();
+	else if (MATCH("YBEXPRCOLREFDESC", 16))
+		return_value = _readYbExprColrefDesc();
 	else
 	{
 		elog(ERROR, "badly formatted node string \"%.32s\"...", token);

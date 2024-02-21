@@ -29,9 +29,10 @@
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 
+#include "utils/syscache.h"
+#include "pg_yb_utils.h"
 
 static bool isObjectPinned(const ObjectAddress *object);
-
 
 /*
  * Record a dependency between 2 objects via their respective objectAddress.
@@ -141,7 +142,7 @@ recordMultipleDependencies(const ObjectAddress *depender,
 				indstate = CatalogOpenIndexes(dependDesc);
 
 			CatalogTuplesMultiInsertWithInfo(dependDesc, slot, slot_stored_count,
-											 indstate);
+											 indstate, false /* yb_shared_insert */);
 			slot_stored_count = 0;
 		}
 	}
@@ -154,7 +155,7 @@ recordMultipleDependencies(const ObjectAddress *depender,
 			indstate = CatalogOpenIndexes(dependDesc);
 
 		CatalogTuplesMultiInsertWithInfo(dependDesc, slot, slot_stored_count,
-										 indstate);
+										 indstate, false /* yb_shared_insert */);
 	}
 
 	if (indstate != NULL)
@@ -242,6 +243,56 @@ recordDependencyOnCurrentExtension(const ObjectAddress *object,
 }
 
 /*
+ * Record a DEPENDENCY_PIN for the given referenced object.
+ * This is the only dependency created for system relations and their rowtypes.
+ * Note that this is not used during initdb.
+ *
+ * shared_insert means that the record will be inserted in ALL databases.
+ */
+void
+YbRecordPinDependency(const ObjectAddress *referenced, bool shared_insert)
+{
+	Relation	dependDesc;
+	CatalogIndexState indstate;
+	HeapTuple	tup;
+	bool		nulls[Natts_pg_depend];
+	Datum		values[Natts_pg_depend];
+
+	Assert(!IsBootstrapProcessingMode());
+
+	dependDesc = table_open(DependRelationId, RowExclusiveLock);
+
+	memset(nulls, false, sizeof(nulls));
+
+	values[Anum_pg_depend_classid - 1]  = InvalidOid;
+	values[Anum_pg_depend_objid - 1]    = InvalidOid;
+	values[Anum_pg_depend_objsubid - 1] = InvalidOid;
+
+	values[Anum_pg_depend_refclassid - 1]  = ObjectIdGetDatum(referenced->classId);
+	values[Anum_pg_depend_refobjid - 1]    = ObjectIdGetDatum(referenced->objectId);
+	values[Anum_pg_depend_refobjsubid - 1] = Int32GetDatum(referenced->objectSubId);
+
+	/* TODO(alex@yugabyte): DEPENDENCY_PIN is no longer available.
+	   values[Anum_pg_depend_deptype - 1] = CharGetDatum(DEPENDENCY_PIN);
+	*/
+
+	tup = heap_form_tuple(dependDesc->rd_att, values, nulls);
+
+	indstate = CatalogOpenIndexes(dependDesc);
+
+	CatalogTupleInsertWithInfo(dependDesc, tup, indstate, shared_insert);
+
+	heap_freetuple(tup);
+
+	CatalogCloseIndexes(indstate);
+
+	table_close(dependDesc, RowExclusiveLock);
+
+	YbPinObjectIfNeeded(referenced->classId, referenced->objectId,
+						false /* shared_dependency */);
+}
+
+/*
  * If we are executing a CREATE EXTENSION operation, check that the given
  * object is a member of the extension, and throw an error if it isn't.
  * Otherwise, do nothing.
@@ -326,7 +377,7 @@ deleteDependencyRecordsFor(Oid classId, Oid objectId,
 			((Form_pg_depend) GETSTRUCT(tup))->deptype == DEPENDENCY_EXTENSION)
 			continue;
 
-		CatalogTupleDelete(depRel, &tup->t_self);
+		CatalogTupleDelete(depRel, tup);
 		count++;
 	}
 
@@ -376,7 +427,7 @@ deleteDependencyRecordsForClass(Oid classId, Oid objectId,
 
 		if (depform->refclassid == refclassId && depform->deptype == deptype)
 		{
-			CatalogTupleDelete(depRel, &tup->t_self);
+			CatalogTupleDelete(depRel, tup);
 			count++;
 		}
 	}
@@ -425,7 +476,7 @@ deleteDependencyRecordsForSpecific(Oid classId, Oid objectId, char deptype,
 			depform->refobjid == refobjectId &&
 			depform->deptype == deptype)
 		{
-			CatalogTupleDelete(depRel, &tup->t_self);
+			CatalogTupleDelete(depRel, tup);
 			count++;
 		}
 	}
@@ -527,7 +578,7 @@ changeDependencyFor(Oid classId, Oid objectId,
 			depform->refobjid == oldRefObjectId)
 		{
 			if (newIsPinned)
-				CatalogTupleDelete(depRel, &tup->t_self);
+				CatalogTupleDelete(depRel, tup);
 			else
 			{
 				/* make a modifiable copy */
@@ -670,7 +721,7 @@ changeDependenciesOn(Oid refClassId, Oid oldRefObjectId,
 	while (HeapTupleIsValid((tup = systable_getnext(scan))))
 	{
 		if (newIsPinned)
-			CatalogTupleDelete(depRel, &tup->t_self);
+			CatalogTupleDelete(depRel, tup);
 		else
 		{
 			Form_pg_depend depform;

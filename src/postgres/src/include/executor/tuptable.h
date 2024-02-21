@@ -127,8 +127,13 @@ typedef struct TupleTableSlot
 #define FIELDNO_TUPLETABLESLOT_ISNULL 6
 	bool	   *tts_isnull;		/* current per-attribute isnull flags */
 	MemoryContext tts_mcxt;		/* slot itself is in this context */
-	ItemPointerData tts_tid;	/* stored tuple's tid */
+	ItemPointerData tts_tid;	/* stored tuple's tid (containing yb ctid) */
 	Oid			tts_tableOid;	/* table oid of tuple */
+
+	/* YugaByte support */
+	/* Datum tts_ybctid; */  /* Selected ybctid value. Replaced by field "tts_tid". */
+	Datum tts_yb_insert_oid; /* OID specified in INSERT during YSQL upgrade,
+							  * should not be used for any other purpose. */
 } TupleTableSlot;
 
 /* routines for a TupleTableSlot implementation */
@@ -412,6 +417,12 @@ slot_getsysattr(TupleTableSlot *slot, int attnum, bool *isnull)
 	{
 		*isnull = false;
 		return PointerGetDatum(&slot->tts_tid);
+	}
+	else if (attnum == YBTupleIdAttributeNumber)
+	{
+		/* heap tuple is not required to obtain the ybctid */
+		*isnull = false;
+		return TABLETUPLE_YBCTID(slot);
 	}
 
 	/* Fetch the system attribute from the underlying tuple. */

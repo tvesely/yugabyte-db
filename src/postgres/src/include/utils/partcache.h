@@ -99,4 +99,7 @@ get_partition_col_collation(PartitionKey key, int col)
 	return key->partcollation[col];
 }
 
+/* Yugabyte: Change partitioning functions from static to extern for yb modules */
+extern void RelationBuildPartitionKey(Relation relation);
+
 #endif							/* PARTCACHE_H */

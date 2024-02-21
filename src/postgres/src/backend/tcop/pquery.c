@@ -19,6 +19,7 @@
 
 #include "access/xact.h"
 #include "commands/prepare.h"
+#include "commands/trigger.h"
 #include "executor/tstoreReceiver.h"
 #include "miscadmin.h"
 #include "pg_trace.h"
@@ -27,6 +28,9 @@
 #include "utils/memutils.h"
 #include "utils/snapmgr.h"
 
+#include "pg_yb_utils.h"
+#include "executor/ybcModifyTable.h"
+#include "optimizer/ybcplan.h"
 
 /*
  * ActivePortal is the currently executing Portal (the most closely nested,
@@ -34,13 +38,15 @@
  */
 Portal		ActivePortal = NULL;
 
+int			yb_pg_batch_detection_mechanism;
 
 static void ProcessQuery(PlannedStmt *plan,
 						 const char *sourceText,
 						 ParamListInfo params,
 						 QueryEnvironment *queryEnv,
 						 DestReceiver *dest,
-						 QueryCompletion *qc);
+						 QueryCompletion *qc,
+						 bool isSingleRowModifyTxn);
 static void FillPortalStore(Portal portal, bool isTopLevel);
 static uint64 RunFromStore(Portal portal, ScanDirection direction, uint64 count,
 						   DestReceiver *dest);
@@ -73,6 +79,8 @@ CreateQueryDesc(PlannedStmt *plannedstmt,
 				QueryEnvironment *queryEnv,
 				int instrument_options)
 {
+	YbPgMemResetStmtConsumption();
+
 	QueryDesc  *qd = (QueryDesc *) palloc(sizeof(QueryDesc));
 
 	qd->operation = plannedstmt->commandType;	/* operation */
@@ -91,6 +99,7 @@ CreateQueryDesc(PlannedStmt *plannedstmt,
 	qd->estate = NULL;
 	qd->planstate = NULL;
 	qd->totaltime = NULL;
+	qd->yb_query_stats = NULL;
 
 	/* not yet executed */
 	qd->already_executed = false;
@@ -138,7 +147,8 @@ ProcessQuery(PlannedStmt *plan,
 			 ParamListInfo params,
 			 QueryEnvironment *queryEnv,
 			 DestReceiver *dest,
-			 QueryCompletion *qc)
+			 QueryCompletion *qc,
+			 bool isSingleRowModifyTxn)
 {
 	QueryDesc  *queryDesc;
 
@@ -153,6 +163,14 @@ ProcessQuery(PlannedStmt *plan,
 	 * Call ExecutorStart to prepare the plan for execution
 	 */
 	ExecutorStart(queryDesc, 0);
+
+	/* Set whether this is a single-row, single-stmt modify, used in YB mode. */
+	queryDesc->estate->yb_es_is_single_row_modify_txn =
+		isSingleRowModifyTxn &&
+		list_length(queryDesc->estate->es_opened_result_relations) == 1 &&
+		(plan->commandType == CMD_UPDATE ||
+		 YBCIsSingleRowTxnCapableRel(
+			 linitial(queryDesc->estate->es_opened_result_relations)));
 
 	/*
 	 * Run the plan to completion.
@@ -729,7 +747,7 @@ PortalRun(Portal portal, long count, bool isTopLevel, bool run_once,
 	 * restart.  So we need to be prepared to restore it as pointing to the
 	 * exit-time TopTransactionResourceOwner.  (Ain't that ugly?  This idea of
 	 * internally starting whole new transactions is not good.)
-	 * CurrentMemoryContext has a similar problem, but the other pointers we
+	 * GetCurrentMemoryContext() has a similar problem, but the other pointers we
 	 * save here will be NULL or pointing to longer-lived objects.
 	 */
 	saveTopTransactionResourceOwner = TopTransactionResourceOwner;
@@ -737,7 +755,7 @@ PortalRun(Portal portal, long count, bool isTopLevel, bool run_once,
 	saveActivePortal = ActivePortal;
 	saveResourceOwner = CurrentResourceOwner;
 	savePortalContext = PortalContext;
-	saveMemoryContext = CurrentMemoryContext;
+	saveMemoryContext = GetCurrentMemoryContext();
 	PG_TRY();
 	{
 		ActivePortal = portal;
@@ -804,10 +822,19 @@ PortalRun(Portal portal, long count, bool isTopLevel, bool run_once,
 				result = false; /* keep compiler quiet */
 				break;
 		}
+		// We flush buffered ops here to ensure that any errors in the ops can be caught by the
+		// PG_CATCH() and mark the portal failed. If some ops are not flushed here and say flushed later
+		// at a place that doesn't catch the error and mark the portal failed, it can result in spurious
+		// WARNING messages (like "Snapshot reference leak") when releasing the portal resources later
+		// (for example via a CreatePortal() call that drops existing duplicate portal of an earlier
+		// execution).
+		if (isTopLevel)
+			YBFlushBufferedOperations();
 	}
 	PG_CATCH();
 	{
 		/* Uncaught error while executing portal: mark it dead */
+		MemoryContextReset(portal->ybRunContext);
 		MarkPortalFailed(portal);
 
 		/* Restore global vars and propagate error */
@@ -835,6 +862,9 @@ PortalRun(Portal portal, long count, bool isTopLevel, bool run_once,
 		CurrentResourceOwner = TopTransactionResourceOwner;
 	else
 		CurrentResourceOwner = saveResourceOwner;
+
+	/* Clear runContext as PortalRun is completed */
+	MemoryContextReset(portal->ybRunContext);
 	PortalContext = savePortalContext;
 
 	if (log_executor_stats && portal->strategy != PORTAL_MULTI_QUERY)
@@ -1193,6 +1223,7 @@ PortalRunMulti(Portal portal,
 			   QueryCompletion *qc)
 {
 	bool		active_snapshot_set = false;
+	bool        is_single_row_modify_txn = false;
 	ListCell   *stmtlist_item;
 
 	/*
@@ -1209,6 +1240,15 @@ PortalRunMulti(Portal portal,
 		dest = None_Receiver;
 	if (altdest->mydest == DestRemoteExecute)
 		altdest = None_Receiver;
+
+	if (IsYugaByteEnabled() &&
+		!IsTransactionBlock() &&
+		!YbIsBatchedExecution() &&
+		list_length(portal->stmts) == 1)
+	{
+		PlannedStmt *pstmt = linitial_node(PlannedStmt, portal->stmts);
+		is_single_row_modify_txn = YBCIsSingleRowModify(pstmt);
+	}
 
 	/*
 	 * Loop to handle the individual queries generated from a single parsetree
@@ -1278,7 +1318,8 @@ PortalRunMulti(Portal portal,
 							 portal->sourceText,
 							 portal->portalParams,
 							 portal->queryEnv,
-							 dest, qc);
+							 dest, qc,
+							 is_single_row_modify_txn);
 			}
 			else
 			{
@@ -1287,7 +1328,9 @@ PortalRunMulti(Portal portal,
 							 portal->sourceText,
 							 portal->portalParams,
 							 portal->queryEnv,
-							 altdest, NULL);
+							 altdest,
+							 NULL,
+							 is_single_row_modify_txn);
 			}
 
 			if (log_executor_stats)
@@ -1327,7 +1370,7 @@ PortalRunMulti(Portal portal,
 		/*
 		 * Clear subsidiary contexts to recover temporary memory.
 		 */
-		Assert(portal->portalContext == CurrentMemoryContext);
+		Assert(portal->portalContext == GetCurrentMemoryContext());
 
 		MemoryContextDeleteChildren(portal->portalContext);
 

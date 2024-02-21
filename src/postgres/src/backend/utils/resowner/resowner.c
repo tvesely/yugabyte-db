@@ -33,6 +33,7 @@
 #include "utils/resowner_private.h"
 #include "utils/snapmgr.h"
 
+#include "pg_yb_utils.h"
 
 /*
  * All resource IDs managed by this code are required to fit into a Datum,
@@ -557,7 +558,7 @@ ResourceOwnerReleaseInternal(ResourceOwner owner,
 		/* Ditto for JIT contexts */
 		while (ResourceArrayGetAny(&(owner->jitarr), &foundres))
 		{
-			JitContext *context = (JitContext *) PointerGetDatum(foundres);
+			JitContext *context = (JitContext *) DatumGetPointer(foundres);
 
 			jit_release_context(context);
 		}

@@ -32,6 +32,9 @@
 #include "utils/memutils.h"
 #include "utils/syscache.h"
 
+// YB includes.
+#include "pg_yb_utils.h"
+
 /* Potentially set by pg_upgrade_support functions */
 Oid			binary_upgrade_next_pg_enum_oid = InvalidOid;
 
@@ -173,7 +176,7 @@ EnumValuesDelete(Oid enumTypeOid)
 
 	while (HeapTupleIsValid(tup = systable_getnext(scan)))
 	{
-		CatalogTupleDelete(pg_enum, &tup->t_self);
+		CatalogTupleDelete(pg_enum, tup);
 	}
 
 	systable_endscan(scan);
@@ -371,7 +374,7 @@ restart:
 	}
 
 	/* Get a new OID for the new label */
-	if (IsBinaryUpgrade)
+	if (IsBinaryUpgrade || yb_binary_restore)
 	{
 		if (!OidIsValid(binary_upgrade_next_pg_enum_oid))
 			ereport(ERROR,
@@ -643,6 +646,13 @@ static void
 RenumberEnumType(Relation pg_enum, HeapTuple *existing, int nelems)
 {
 	int			i;
+
+	if (IsYugaByteEnabled())
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("renumber enum labels is not yet supported")));
+	}
 
 	/*
 	 * We should only need to increase existing elements' enumsortorders,

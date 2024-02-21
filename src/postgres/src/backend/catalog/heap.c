@@ -74,6 +74,11 @@
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 
+/* YB includes. */
+#include "catalog/pg_authid.h"
+#include "catalog/pg_init_privs.h"
+#include "catalog/pg_yb_tablegroup.h"
+#include "pg_yb_utils.h"
 
 /* Potentially set by pg_upgrade_support functions */
 Oid			binary_upgrade_next_heap_pg_class_oid = InvalidOid;
@@ -98,7 +103,8 @@ static ObjectAddress AddNewRelationType(const char *typeName,
 										char new_rel_kind,
 										Oid ownerid,
 										Oid new_row_type,
-										Oid new_array_type);
+										Oid new_array_type,
+										bool yb_new_rel_is_shared);
 static void RelationRemoveInheritance(Oid relid);
 static Oid	StoreRelCheck(Relation rel, const char *ccname, Node *expr,
 						  bool is_validated, bool is_local, int inhcount,
@@ -288,6 +294,7 @@ Relation
 heap_create(const char *relname,
 			Oid relnamespace,
 			Oid reltablespace,
+			Oid reltablegroup,
 			Oid relid,
 			Oid relfilenode,
 			Oid accessmtd,
@@ -338,6 +345,14 @@ heap_create(const char *relname,
 	/* Don't create storage for relkinds without physical storage. */
 	if (!RELKIND_HAS_STORAGE(relkind))
 		create_storage = false;
+	else if (shared_relation)
+		/*
+		 * YB note:
+		 * Shared relations have no relfilenode.
+		 * Note that relations defined with BKI_BOOTSTRAP option have no relfilenode
+		 * either, but YB tables shouldn't use it.
+		 */
+		relfilenode = InvalidOid;
 	else
 	{
 		/*
@@ -376,6 +391,15 @@ heap_create(const char *relname,
 									 relkind);
 
 	/*
+	 * Create local storage in YB only if storage is required and it is a
+	 * temporary relation.
+	 * TODO Consider hooking the YB-Create logic here instead of above.
+	 */
+	if (YBIsEnabledInPostgresEnvVar())
+		create_storage = create_storage &&
+						 relpersistence == RELPERSISTENCE_TEMP;
+
+	/*
 	 * Have the storage manager create the relation's disk file, if needed.
 	 *
 	 * For tables, the AM callback creates both the main and the init fork.
@@ -399,9 +423,23 @@ heap_create(const char *relname,
 	 * protected by the existence of a physical file; but for relations with
 	 * no files, add a pg_shdepend entry to account for that.
 	 */
-	if (!create_storage && reltablespace != InvalidOid)
+	if ((IsYBRelation(rel) || !create_storage) && reltablespace != InvalidOid)
 		recordDependencyOnTablespace(RelationRelationId, relid,
 									 reltablespace);
+
+	if (IsYBRelation(rel) && reltablegroup != InvalidOid)
+	{
+		ObjectAddress myself, tablegroup;
+		myself.classId = RelationRelationId;
+		myself.objectId = relid;
+		myself.objectSubId = 0;
+
+		tablegroup.classId = YbTablegroupRelationId;
+		tablegroup.objectId = reltablegroup;
+		tablegroup.objectSubId = 0;
+
+		recordDependencyOn(&myself, &tablegroup, DEPENDENCY_NORMAL);
+	}
 
 	/* ensure that stats are dropped if transaction aborts */
 	pgstat_create_relation(rel);
@@ -698,7 +736,8 @@ InsertPgAttributeTuples(Relation pg_attribute_rel,
 						TupleDesc tupdesc,
 						Oid new_rel_oid,
 						Datum *attoptions,
-						CatalogIndexState indstate)
+						CatalogIndexState indstate,
+						bool yb_relisshared)
 {
 	TupleTableSlot **slot;
 	TupleDesc	td;
@@ -706,6 +745,7 @@ InsertPgAttributeTuples(Relation pg_attribute_rel,
 	int			natts = 0;
 	int			slotCount = 0;
 	bool		close_index = false;
+	bool		yb_shared_insert = yb_relisshared && !IsBootstrapProcessingMode();
 
 	td = RelationGetDescr(pg_attribute_rel);
 
@@ -779,8 +819,7 @@ InsertPgAttributeTuples(Relation pg_attribute_rel,
 
 			/* insert the new tuples and update the indexes */
 			CatalogTuplesMultiInsertWithInfo(pg_attribute_rel, slot, slotCount,
-											 indstate);
-			slotCount = 0;
+											 indstate, yb_shared_insert);
 		}
 
 		natts++;
@@ -803,7 +842,8 @@ InsertPgAttributeTuples(Relation pg_attribute_rel,
 static void
 AddNewAttributeTuples(Oid new_rel_oid,
 					  TupleDesc tupdesc,
-					  char relkind)
+					  char relkind,
+					  bool yb_relisshared)
 {
 	Relation	rel;
 	CatalogIndexState indstate;
@@ -821,24 +861,27 @@ AddNewAttributeTuples(Oid new_rel_oid,
 	/* set stats detail level to a sane default */
 	for (int i = 0; i < natts; i++)
 		tupdesc->attrs[i].attstattarget = -1;
-	InsertPgAttributeTuples(rel, tupdesc, new_rel_oid, NULL, indstate);
+	InsertPgAttributeTuples(rel, tupdesc, new_rel_oid, NULL, indstate, yb_relisshared);
 
-	/* add dependencies on their datatypes and collations */
-	for (int i = 0; i < natts; i++)
-	{
-		/* Add dependency info */
-		ObjectAddressSubSet(myself, RelationRelationId, new_rel_oid, i + 1);
-		ObjectAddressSet(referenced, TypeRelationId,
-						 tupdesc->attrs[i].atttypid);
-		recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
-
-		/* The default collation is pinned, so don't bother recording it */
-		if (OidIsValid(tupdesc->attrs[i].attcollation) &&
-			tupdesc->attrs[i].attcollation != DEFAULT_COLLATION_OID)
+	/* Skip adding dependencies for shared relation attrs */
+	if (!IsYsqlUpgrade || !yb_relisshared || IsBootstrapProcessingMode()) {
+		/* add dependencies on their datatypes and collations */
+		for (int i = 0; i < natts; i++)
 		{
-			ObjectAddressSet(referenced, CollationRelationId,
-							 tupdesc->attrs[i].attcollation);
+			/* Add dependency info */
+			ObjectAddressSubSet(myself, RelationRelationId, new_rel_oid, i + 1);
+			ObjectAddressSet(referenced, TypeRelationId,
+							 tupdesc->attrs[i].atttypid);
 			recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
+
+			/* The default collation is pinned, so don't bother recording it */
+			if (OidIsValid(tupdesc->attrs[i].attcollation) &&
+				tupdesc->attrs[i].attcollation != DEFAULT_COLLATION_OID)
+			{
+				ObjectAddressSet(referenced, CollationRelationId,
+								 tupdesc->attrs[i].attcollation);
+				recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
+			}
 		}
 	}
 
@@ -853,7 +896,7 @@ AddNewAttributeTuples(Oid new_rel_oid,
 
 		td = CreateTupleDesc(lengthof(SysAtt), (FormData_pg_attribute **) &SysAtt);
 
-		InsertPgAttributeTuples(rel, td, new_rel_oid, NULL, indstate);
+		InsertPgAttributeTuples(rel, td, new_rel_oid, NULL, indstate, yb_relisshared);
 		FreeTupleDesc(td);
 	}
 
@@ -889,6 +932,17 @@ InsertPgClassTuple(Relation pg_class_desc,
 	Datum		values[Natts_pg_class];
 	bool		nulls[Natts_pg_class];
 	HeapTuple	tup;
+
+	if (IsYBRelation(new_rel_desc) &&
+		rd_rel->relowner != BOOTSTRAP_SUPERUSERID)
+	{
+		if (rd_rel->relisshared)
+			elog(ERROR, "shared relation should be owned by superuser!");
+
+		if (IsCatalogRelation(new_rel_desc) && IsYsqlUpgrade)
+			elog(ERROR, "system relation created during YSQL upgrade "
+						"should be owned by superuser!");
+	}
 
 	/* This is a tad tedious, but way cleaner than what we used to do... */
 	memset(values, 0, sizeof(values));
@@ -939,7 +993,8 @@ InsertPgClassTuple(Relation pg_class_desc,
 	tup = heap_form_tuple(RelationGetDescr(pg_class_desc), values, nulls);
 
 	/* finally insert the new tuple, update the indexes, and clean up */
-	CatalogTupleInsert(pg_class_desc, tup);
+	YBCatalogTupleInsert(pg_class_desc, tup,
+						 rd_rel->relisshared && !IsBootstrapProcessingMode());
 
 	heap_freetuple(tup);
 }
@@ -1016,7 +1071,8 @@ AddNewRelationType(const char *typeName,
 				   char new_rel_kind,
 				   Oid ownerid,
 				   Oid new_row_type,
-				   Oid new_array_type)
+				   Oid new_array_type,
+				   bool yb_new_rel_is_shared)
 {
 	return
 		TypeCreate(new_row_type,	/* optional predetermined OID */
@@ -1050,7 +1106,68 @@ AddNewRelationType(const char *typeName,
 				   -1,			/* typmod */
 				   0,			/* array dimensions for typBaseType */
 				   false,		/* Type NOT NULL */
-				   InvalidOid); /* rowtypes never have a collation */
+				   InvalidOid,	/* rowtypes never have a collation */
+				   yb_new_rel_is_shared); /* whether new relation is shared */
+}
+
+/*
+ * Insert initdb-like permissions into pg_init_privs and return the relacl
+ * to be set in pg_class.
+ *
+ * initdb sets a very specific set of permissions which we replicate here:
+ * '=r/$BOOTSTRAP_SUPERUSERID' followed by
+ * pg_catalog.acldefault('r', BOOTSTRAP_SUPERUSERID)
+ * (which results in {=r/postgres,postgres=arwdDxt/postgres}).
+ *
+ * See setup_privileges() in initdb.c.
+ */
+static Acl*
+YbSetInitdbPermissions(Oid relid, char relkind, bool relisshared)
+{
+	Acl* acl;
+
+	AclItem aclitem;
+	aclitem.ai_grantee = ACL_ID_PUBLIC;
+	aclitem.ai_grantor = BOOTSTRAP_SUPERUSERID;
+	ACLITEM_SET_RIGHTS(aclitem, ACL_SELECT);
+
+	Acl *allow_read_to_everyone = aclupdate(make_empty_acl(), &aclitem,
+		ACL_MODECHG_EQL, BOOTSTRAP_SUPERUSERID, DROP_RESTRICT);
+
+	Acl *superuser_default =
+	    acldefault(relkind == RELKIND_SEQUENCE ? OBJECT_SEQUENCE
+											   : OBJECT_TABLE,
+				   BOOTSTRAP_SUPERUSERID);
+
+	acl = aclconcat(allow_read_to_everyone, superuser_default);
+
+	/*
+	 * We also need to insert this ACL value into pg_init_privs
+	 * (for shared rels - do the insert in all databases).
+	 */
+
+	Relation    pg_init_privs       = table_open(InitPrivsRelationId, RowExclusiveLock);
+	HeapTuple   pg_init_privs_tuple;
+	Datum       values[Natts_pg_init_privs];
+	bool        nulls[Natts_pg_init_privs];
+
+	values[Anum_pg_init_privs_objoid - 1]    = ObjectIdGetDatum(relid);
+	values[Anum_pg_init_privs_classoid - 1]  = ObjectIdGetDatum(RelationRelationId);
+	values[Anum_pg_init_privs_objsubid - 1]  = (Datum) 0;
+	values[Anum_pg_init_privs_privtype - 1]  = CharGetDatum(INITPRIVS_INITDB);
+	values[Anum_pg_init_privs_initprivs - 1] = PointerGetDatum(acl);
+
+	MemSet(nulls, false, sizeof(nulls));
+
+	pg_init_privs_tuple =
+		heap_form_tuple(RelationGetDescr(pg_init_privs), values, nulls);
+
+	YBCatalogTupleInsert(pg_init_privs, pg_init_privs_tuple, relisshared);
+
+	heap_freetuple(pg_init_privs_tuple);
+	table_close(pg_init_privs, RowExclusiveLock);
+
+	return acl;
 }
 
 /* --------------------------------
@@ -1075,10 +1192,14 @@ AddNewRelationType(const char *typeName,
  *	mapped_relation: true if the relation will use the relfilenode map
  *	oncommit: ON COMMIT marking (only relevant if it's a temp table)
  *	reloptions: reloptions in Datum form, or (Datum) 0 if none
+ *		Not used for system relations in YSQL upgrade mode.
  *	use_user_acl: true if should look for user-defined default permissions;
- *		if false, relacl is always set NULL
+ *		if false, relacl is always set NULL.
  *	allow_system_table_mods: true to allow creation in system namespaces
  *	is_internal: is this a system-generated catalog?
+ *	yb_use_initdb_acl: if true, permissions will be set as if the relation
+ *		is created by initdb via BKI or yb_system_views.sql.
+ *		Can only be used in YSQL upgrade mode, has priority over use_user_acl.
  *
  * Output parameters:
  *	typaddress: if not null, gets the object address of the new pg_type entry
@@ -1091,6 +1212,7 @@ Oid
 heap_create_with_catalog(const char *relname,
 						 Oid relnamespace,
 						 Oid reltablespace,
+						 Oid reltablegroup,
 						 Oid relid,
 						 Oid reltypeid,
 						 Oid reloftypeid,
@@ -1108,7 +1230,8 @@ heap_create_with_catalog(const char *relname,
 						 bool allow_system_table_mods,
 						 bool is_internal,
 						 Oid relrewrite,
-						 ObjectAddress *typaddress)
+						 ObjectAddress *typaddress,
+						 bool yb_use_initdb_acl)
 {
 	Relation	pg_class_desc;
 	Relation	new_rel_desc;
@@ -1121,6 +1244,8 @@ heap_create_with_catalog(const char *relname,
 	Oid			relfilenode = InvalidOid;
 	TransactionId relfrozenxid;
 	MultiXactId relminmxid;
+	/* YB variables. */
+	bool		is_system = IsCatalogNamespace(relnamespace);
 
 	pg_class_desc = table_open(RelationRelationId, RowExclusiveLock);
 
@@ -1128,6 +1253,7 @@ heap_create_with_catalog(const char *relname,
 	 * sanity checks
 	 */
 	Assert(IsNormalProcessingMode() || IsBootstrapProcessingMode());
+	Assert(IsYsqlUpgrade || !is_system || !yb_use_initdb_acl);
 
 	/*
 	 * Validate proposed tupdesc for the desired relkind.  If
@@ -1137,25 +1263,37 @@ heap_create_with_catalog(const char *relname,
 	CheckAttributeNamesTypes(tupdesc, relkind,
 							 allow_system_table_mods ? CHKATYPE_ANYARRAY : 0);
 
-	/*
-	 * This would fail later on anyway, if the relation already exists.  But
-	 * by catching it here we can emit a nicer error message.
-	 */
-	existing_relid = get_relname_relid(relname, relnamespace);
-	if (existing_relid != InvalidOid)
-		ereport(ERROR,
-				(errcode(ERRCODE_DUPLICATE_TABLE),
-				 errmsg("relation \"%s\" already exists", relname)));
+	existing_relid = InvalidOid;
+	old_type_oid = InvalidOid;
 
 	/*
-	 * Since we are going to create a rowtype as well, also check for
-	 * collision with an existing type name.  If there is one and it's an
-	 * autogenerated array, we can rename it out of the way; otherwise we can
-	 * at least give a good error message.
+	 * In YB mode, during bootstrap, a relation lookup by name will be a full-table scan
+	 * and slow because secondary indexes are not available yet. So we will skip this
+	 * duplicate name check as it will error later anyway when the indexes are created.
 	 */
-	old_type_oid = GetSysCacheOid2(TYPENAMENSP, Anum_pg_type_oid,
-								   CStringGetDatum(relname),
-								   ObjectIdGetDatum(relnamespace));
+	if (!IsYugaByteEnabled() || !IsBootstrapProcessingMode())
+	{
+		/*
+		 * This would fail later on anyway, if the relation already exists.  But
+		 * by catching it here we can emit a nicer error message.
+		 */
+		existing_relid = get_relname_relid(relname, relnamespace);
+		if (existing_relid != InvalidOid)
+			ereport(ERROR,
+					(errcode(ERRCODE_DUPLICATE_TABLE),
+					 errmsg("relation \"%s\" already exists", relname)));
+
+		/*
+		 * Since we are going to create a rowtype as well, also check for
+		 * collision with an existing type name.  If there is one and it's an
+		 * autogenerated array, we can rename it out of the way; otherwise we can
+		 * at least give a good error message.
+		 */
+		old_type_oid = GetSysCacheOid2(TYPENAMENSP, Anum_pg_type_oid,
+									   CStringGetDatum(relname),
+									   ObjectIdGetDatum(relnamespace));
+	}
+
 	if (OidIsValid(old_type_oid))
 	{
 		if (!moveArrayTypeName(old_type_oid, relname, relnamespace))
@@ -1182,7 +1320,7 @@ heap_create_with_catalog(const char *relname,
 	if (!OidIsValid(relid))
 	{
 		/* Use binary-upgrade override for pg_class.oid and relfilenode */
-		if (IsBinaryUpgrade)
+		if (IsBinaryUpgrade && !yb_binary_restore)
 		{
 			/*
 			 * Indexes are not supported here; they use
@@ -1237,9 +1375,40 @@ heap_create_with_catalog(const char *relname,
 	}
 
 	/*
+	 * YSQL upgrade notes:
+	 * -------------------
+	 * At this point, reloptions no longer affects the relation
+	 * creation process, the only remaining use for them is to be
+	 * stored in pg_class. ybTransformRelOptions has already
+	 * removed all temporary reloptions.
+	 *
+	 * We want system tables to not have any reloptions stored to
+	 * imitate BKI processing, so we don't allow any reloption not
+	 * removed by ybTransformRelOptions.
+	 *
+	 * Stuff defined through yb_system_views.sql, on the other hand, is
+	 * allowed to have non-temporary reloptions.
+	 *
+	 * (Note: heap_create_with_catalog is not used for CREATE INDEX.)
+	 */
+	if (IsYsqlUpgrade && is_system && relkind == RELKIND_RELATION &&
+		reloptions != (Datum) 0)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+				 errmsg("unsuppored reloptions were used for a system table "
+				        "during YSQL upgrade"),
+				 errhint("Only a small subset is allowed due to BKI restrictions.")));
+	}
+
+	/*
 	 * Determine the relation's initial permissions.
 	 */
-	if (use_user_acl)
+	if (yb_use_initdb_acl)
+	{
+		relacl = YbSetInitdbPermissions(relid, relkind, shared_relation);
+	}
+	else if (use_user_acl && !(IsYsqlUpgrade && is_system && relkind == RELKIND_RELATION))
 	{
 		switch (relkind)
 		{
@@ -1275,6 +1444,7 @@ heap_create_with_catalog(const char *relname,
 	new_rel_desc = heap_create(relname,
 							   relnamespace,
 							   reltablespace,
+							   reltablegroup,
 							   relid,
 							   relfilenode,
 							   accessmtd,
@@ -1327,7 +1497,8 @@ heap_create_with_catalog(const char *relname,
 										   relkind,
 										   ownerid,
 										   reltypeid,
-										   new_array_oid);
+										   new_array_oid,
+										   shared_relation);
 		new_type_oid = new_type_addr.objectId;
 		if (typaddress)
 			*typaddress = new_type_addr;
@@ -1366,7 +1537,8 @@ heap_create_with_catalog(const char *relname,
 				   -1,			/* typmod */
 				   0,			/* array dimensions for typBaseType */
 				   false,		/* Type NOT NULL */
-				   InvalidOid); /* rowtypes never have a collation */
+				   InvalidOid,	/* rowtypes never have a collation */
+				   shared_relation);		/* shared relation */
 
 		pfree(relarrayname);
 	}
@@ -1401,12 +1573,14 @@ heap_create_with_catalog(const char *relname,
 	/*
 	 * now add tuples to pg_attribute for the attributes in our new relation.
 	 */
-	AddNewAttributeTuples(relid, new_rel_desc->rd_att, relkind);
+	AddNewAttributeTuples(relid, new_rel_desc->rd_att, relkind, shared_relation);
 
 	/*
 	 * Make a dependency link to force the relation to be deleted if its
 	 * namespace is.  Also make a dependency link to its owner, as well as
 	 * dependencies for any roles mentioned in the default ACL.
+	 * Additionally add dependency on the tablespace this table is being
+	 * created in.
 	 *
 	 * For composite types, these dependencies are tracked for the pg_type
 	 * entry, so we needn't record them here.  Likewise, TOAST tables don't
@@ -1417,6 +1591,10 @@ heap_create_with_catalog(const char *relname,
 	 *
 	 * Also, skip this in bootstrap mode, since we don't make dependencies
 	 * while bootstrapping.
+	 *
+	 * YB NOTE:
+	 * For non-view system relations during YSQL upgrade, we only need to
+	 * record a pin dependency, nothing else.
 	 */
 	if (relkind != RELKIND_COMPOSITE_TYPE &&
 		relkind != RELKIND_TOASTVALUE &&
@@ -1426,40 +1604,47 @@ heap_create_with_catalog(const char *relname,
 					referenced;
 		ObjectAddresses *addrs;
 
-		ObjectAddressSet(myself, RelationRelationId, relid);
-
-		recordDependencyOnOwner(RelationRelationId, relid, ownerid);
-
-		recordDependencyOnNewAcl(RelationRelationId, relid, 0, ownerid, relacl);
-
-		recordDependencyOnCurrentExtension(&myself, false);
-
-		addrs = new_object_addresses();
-
-		ObjectAddressSet(referenced, NamespaceRelationId, relnamespace);
-		add_exact_object_address(&referenced, addrs);
-
-		if (reloftypeid)
+		if (IsYsqlUpgrade && is_system && relkind != RELKIND_VIEW)
 		{
-			ObjectAddressSet(referenced, TypeRelationId, reloftypeid);
-			add_exact_object_address(&referenced, addrs);
+			YbRecordPinDependency(&myself, shared_relation);
 		}
-
-		/*
-		 * Make a dependency link to force the relation to be deleted if its
-		 * access method is.
-		 *
-		 * No need to add an explicit dependency for the toast table, as the
-		 * main table depends on it.
-		 */
-		if (RELKIND_HAS_TABLE_AM(relkind) && relkind != RELKIND_TOASTVALUE)
+		else
 		{
-			ObjectAddressSet(referenced, AccessMethodRelationId, accessmtd);
-			add_exact_object_address(&referenced, addrs);
-		}
+			ObjectAddressSet(myself, RelationRelationId, relid);
 
-		record_object_address_dependencies(&myself, addrs, DEPENDENCY_NORMAL);
-		free_object_addresses(addrs);
+			recordDependencyOnOwner(RelationRelationId, relid, ownerid);
+
+			recordDependencyOnNewAcl(RelationRelationId, relid, 0, ownerid, relacl);
+
+			recordDependencyOnCurrentExtension(&myself, false);
+
+			addrs = new_object_addresses();
+
+			ObjectAddressSet(referenced, NamespaceRelationId, relnamespace);
+			add_exact_object_address(&referenced, addrs);
+
+			if (reloftypeid)
+			{
+				ObjectAddressSet(referenced, TypeRelationId, reloftypeid);
+				add_exact_object_address(&referenced, addrs);
+			}
+
+			/*
+			 * Make a dependency link to force the relation to be deleted if its
+			 * access method is.
+			 *
+			 * No need to add an explicit dependency for the toast table, as the
+			 * main table depends on it.
+			 */
+			if (RELKIND_HAS_TABLE_AM(relkind) && relkind != RELKIND_TOASTVALUE)
+			{
+				ObjectAddressSet(referenced, AccessMethodRelationId, accessmtd);
+				add_exact_object_address(&referenced, addrs);
+			}
+
+			record_object_address_dependencies(&myself, addrs, DEPENDENCY_NORMAL);
+			free_object_addresses(addrs);
+		}
 	}
 
 	/* Post creation hook for new relation */
@@ -1479,6 +1664,10 @@ heap_create_with_catalog(const char *relname,
 	 */
 	if (oncommit != ONCOMMIT_NOOP)
 		register_on_commit_action(relid, oncommit);
+
+	/* Increment sticky object count if the object is a TEMP TABLE. */
+	if (YbIsClientYsqlConnMgr() && new_rel_desc->rd_islocaltemp)
+		increment_sticky_object_count();
 
 	/*
 	 * ok, the relation has been cataloged, so close our relations and return
@@ -1518,7 +1707,7 @@ RelationRemoveInheritance(Oid relid)
 							  NULL, 1, &key);
 
 	while (HeapTupleIsValid(tuple = systable_getnext(scan)))
-		CatalogTupleDelete(catalogRelation, &tuple->t_self);
+		CatalogTupleDelete(catalogRelation, tuple);
 
 	systable_endscan(scan);
 	table_close(catalogRelation, RowExclusiveLock);
@@ -1546,7 +1735,7 @@ DeleteRelationTuple(Oid relid)
 		elog(ERROR, "cache lookup failed for relation %u", relid);
 
 	/* delete the relation tuple from pg_class, and finish up */
-	CatalogTupleDelete(pg_class_desc, &tup->t_self);
+	CatalogTupleDelete(pg_class_desc, tup);
 
 	ReleaseSysCache(tup);
 
@@ -1583,7 +1772,7 @@ DeleteAttributeTuples(Oid relid)
 
 	/* Delete all the matching tuples */
 	while ((atttup = systable_getnext(scan)) != NULL)
-		CatalogTupleDelete(attrel, &atttup->t_self);
+		CatalogTupleDelete(attrel, atttup);
 
 	/* Clean up after the scan */
 	systable_endscan(scan);
@@ -1624,7 +1813,7 @@ DeleteSystemAttributeTuples(Oid relid)
 
 	/* Delete all the matching tuples */
 	while ((atttup = systable_getnext(scan)) != NULL)
-		CatalogTupleDelete(attrel, &atttup->t_self);
+		CatalogTupleDelete(attrel, atttup);
 
 	/* Clean up after the scan */
 	systable_endscan(scan);
@@ -1670,11 +1859,11 @@ RemoveAttributeById(Oid relid, AttrNumber attnum)
 	{
 		/* System attribute (probably OID) ... just delete the row */
 
-		CatalogTupleDelete(attr_rel, &tuple->t_self);
+		CatalogTupleDelete(attr_rel, tuple);
 	}
 	else
 	{
-		/* Dropping user attributes is lots harder */
+	    /* Dropping user attributes is lots harder */
 
 		/* Mark the attribute as dropped */
 		attStruct->attisdropped = true;
@@ -1700,12 +1889,27 @@ RemoveAttributeById(Oid relid, AttrNumber attnum)
 		attStruct->attgenerated = '\0';
 
 		/*
-		 * Change the column name to something that isn't likely to conflict
-		 */
-		snprintf(newattname, sizeof(newattname),
-				 "........pg.dropped.%d........", attnum);
-		namestrcpy(&(attStruct->attname), newattname);
+		* Change the column name to something that isn't likely to conflict
+		*/
 
+		if (IsYugaByteEnabled())
+		{
+			/* TODO: Should be changed to CatalogTupleUpdate() when we are able to update a row's primary key */
+
+			CatalogTupleDelete(attr_rel, tuple);
+
+			snprintf(newattname, sizeof(newattname),
+					 "........pg.dropped.%d........", attnum);
+			namestrcpy(&(attStruct->attname), newattname);
+
+			CatalogTupleInsert(attr_rel, tuple);
+		} else {
+			snprintf(newattname, sizeof(newattname),
+					 "........pg.dropped.%d........", attnum);
+			namestrcpy(&(attStruct->attname), newattname);
+
+			CatalogTupleUpdate(attr_rel, &tuple->t_self, tuple);
+		}
 		/* clear the missing value if any */
 		if (attStruct->atthasmissing)
 		{
@@ -1728,8 +1932,6 @@ RemoveAttributeById(Oid relid, AttrNumber attnum)
 			tuple = heap_modify_tuple(tuple, RelationGetDescr(attr_rel),
 									  valuesAtt, nullsAtt, replacesAtt);
 		}
-
-		CatalogTupleUpdate(attr_rel, &tuple->t_self, tuple);
 	}
 
 	/*
@@ -1831,7 +2033,7 @@ heap_drop_with_catalog(Oid relid)
 		if (!HeapTupleIsValid(tuple))
 			elog(ERROR, "cache lookup failed for foreign table %u", relid);
 
-		CatalogTupleDelete(rel, &tuple->t_self);
+		CatalogTupleDelete(rel, tuple);
 
 		ReleaseSysCache(tuple);
 		table_close(rel, RowExclusiveLock);
@@ -1850,10 +2052,15 @@ heap_drop_with_catalog(Oid relid)
 	if (relid == defaultPartOid)
 		update_default_partition_oid(parentOid, InvalidOid);
 
+	/* Decrement sticky object count if the relation being dropped is a TEMP TABLE. */
+	if (YbIsClientYsqlConnMgr() && (rel)->rd_islocaltemp)
+		decrement_sticky_object_count();
+	
 	/*
 	 * Schedule unlinking of the relation's physical files at commit.
+	 * For Yugabyte-backed relations, there aren't any physical files to remove.
 	 */
-	if (RELKIND_HAS_STORAGE(rel->rd_rel->relkind))
+	if (RELKIND_HAS_STORAGE(rel->rd_rel->relkind) && !IsYBRelation(rel))
 		RelationDropStorage(rel);
 
 	/* ensure that stats are dropped if transaction commits */
@@ -2198,13 +2405,23 @@ StoreConstraints(Relation rel, List *cooked_constraints, bool is_internal)
 	{
 		CookedConstraint *con = (CookedConstraint *) lfirst(lc);
 
+		/*
+		 * System relations can't have defaults or CHECK constraints,
+		 * BKI syntax doesn't support it.
+		 */
 		switch (con->contype)
 		{
 			case CONSTR_DEFAULT:
+				if (IsYBRelation(rel) && IsCatalogRelation(rel))
+					elog(ERROR, "system relations can not have DEFAULT constraints");
+
 				con->conoid = StoreAttrDefault(rel, con->attnum, con->expr,
 											   is_internal, false);
 				break;
 			case CONSTR_CHECK:
+				if (IsYBRelation(rel) && IsCatalogRelation(rel))
+					elog(ERROR, "system relations can not have CHECK constraints");
+
 				con->conoid =
 					StoreRelCheck(rel, con->name, con->expr,
 								  !con->skip_validation, con->is_local,
@@ -2327,6 +2544,9 @@ AddRelationNewConstraints(Relation rel,
 			 castNode(Const, expr)->constisnull))
 			continue;
 
+		if (rel->rd_rel->relisshared && !IsBootstrapProcessingMode())
+			elog(ERROR, "shared relations can not have DEFAULT constraints");
+
 		/* If the DEFAULT is volatile we cannot use a missing value */
 		if (colDef->missingMode && contain_volatile_functions((Node *) expr))
 			colDef->missingMode = false;
@@ -2360,6 +2580,9 @@ AddRelationNewConstraints(Relation rel,
 
 		if (cdef->contype != CONSTR_CHECK)
 			continue;
+
+		if (rel->rd_rel->relisshared && !IsBootstrapProcessingMode())
+			elog(ERROR, "shared relations can not have CHECK constraints");
 
 		if (cdef->raw_expr != NULL)
 		{
@@ -2934,7 +3157,7 @@ RemoveStatistics(Oid relid, AttrNumber attnum)
 
 	/* we must loop even when attnum != 0, in case of inherited stats */
 	while (HeapTupleIsValid(tuple = systable_getnext(scan)))
-		CatalogTupleDelete(pgstatistic, &tuple->t_self);
+		CatalogTupleDelete(pgstatistic, tuple);
 
 	systable_endscan(scan);
 
@@ -3444,7 +3667,7 @@ RemovePartitionKeyByRelId(Oid relid)
 		elog(ERROR, "cache lookup failed for partition key of relation %u",
 			 relid);
 
-	CatalogTupleDelete(rel, &tuple->t_self);
+	CatalogTupleDelete(rel, tuple);
 
 	ReleaseSysCache(tuple);
 	table_close(rel, RowExclusiveLock);
@@ -3532,4 +3755,10 @@ StorePartitionBound(Relation rel, Relation parent, PartitionBoundSpec *bound)
 		CacheInvalidateRelcacheByRelid(defaultPartOid);
 
 	CacheInvalidateRelcache(parent);
+}
+
+Node *
+YbCookConstraint(ParseState *pstate, Node *raw_constraint, char *relname)
+{
+	return cookConstraint(pstate, raw_constraint, relname);
 }

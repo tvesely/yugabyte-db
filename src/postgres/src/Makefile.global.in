@@ -242,7 +242,11 @@ CPP = @CPP@
 CPPFLAGS = @CPPFLAGS@
 PG_SYSROOT = @PG_SYSROOT@
 
-override CPPFLAGS := $(ICU_CFLAGS) $(CPPFLAGS)
+ifndef YB_SRC_ROOT
+$(error YB_SRC_ROOT is not set)
+endif
+
+override CPPFLAGS := $(ICU_CFLAGS) $(CPPFLAGS) -I$(YB_SRC_ROOT)/src
 
 ifdef PGXS
 override CPPFLAGS := -I$(includedir_server) -I$(includedir_internal) $(CPPFLAGS)
@@ -312,6 +316,18 @@ ifdef PGXS
 else
   LDFLAGS_INTERNAL = -L$(top_builddir)/src/port -L$(top_builddir)/src/common
 endif
+
+# YugaByte-specific change: we want rpath for postgres libs to go before rpath from external
+# LDFLAGS.
+
+# Set up rpath if enabled.  By default it will point to our libdir,
+# but individual Makefiles can force other rpath paths if needed.
+rpathdir = $(libdir)
+
+ifeq ($(enable_rpath), yes)
+LDFLAGS_INTERNAL += $(rpath)
+endif
+
 LDFLAGS = $(LDFLAGS_INTERNAL) @LDFLAGS@
 
 LDFLAGS_EX = @LDFLAGS_EX@
@@ -455,6 +471,7 @@ cd $(srcdir) && \
    TESTDIR='$(CURDIR)' PATH="$(bindir):$(CURDIR):$$PATH" \
    PGPORT='6$(DEF_PGPORT)' top_builddir='$(CURDIR)/$(top_builddir)' \
    PG_REGRESS='$(CURDIR)/$(top_builddir)/src/test/regress/pg_regress' \
+   REGRESS_SHLIB='$(abs_top_builddir)/src/test/regress/regress$(DLSUFFIX)' \
    $(PROVE) $(PG_PROVE_FLAGS) $(PROVE_FLAGS) $(if $(PROVE_TESTS),$(PROVE_TESTS),t/*.pl)
 endef
 else # PGXS case
@@ -466,6 +483,7 @@ cd $(srcdir) && \
    TESTDIR='$(CURDIR)' PATH="$(bindir):$(CURDIR):$$PATH" \
    PGPORT='6$(DEF_PGPORT)' top_builddir='$(top_builddir)' \
    PG_REGRESS='$(top_builddir)/src/test/regress/pg_regress' \
+   REGRESS_SHLIB='$(abs_top_builddir)/src/test/regress/regress$(DLSUFFIX)' \
    $(PROVE) $(PG_PROVE_FLAGS) $(PROVE_FLAGS) $(if $(PROVE_TESTS),$(PROVE_TESTS),t/*.pl)
 endef
 endif # PGXS
@@ -554,13 +572,7 @@ DLSUFFIX = @DLSUFFIX@
 # Pull in platform-specific magic
 include $(top_builddir)/src/Makefile.port
 
-# Set up rpath if enabled.  By default it will point to our libdir,
-# but individual Makefiles can force other rpath paths if needed.
-rpathdir = $(libdir)
-
-ifeq ($(enable_rpath), yes)
-LDFLAGS += $(rpath)
-endif
+# YugaByte-specific change: moved rpath setup to happen before @LDFLAGS@ appending.
 
 # Show the DLSUFFIX to build scripts (e.g. buildfarm)
 .PHONY: show_dl_suffix
@@ -812,7 +824,9 @@ ifndef PGXS
 # write `include $(top_builddir)/src/Makefile.global', not some
 # shortcut thereof.
 $(top_builddir)/src/Makefile.global: $(top_srcdir)/src/Makefile.global.in $(top_builddir)/config.status
-	cd $(top_builddir) && ./config.status src/Makefile.global
+	if test -z "$YB_PG_SKIP_CONFIG_STATUS"; then \
+		cd $(top_builddir) && ./config.status src/Makefile.global; \
+	fi
 
 # Remake pg_config.h from pg_config.h.in if the latter changed.
 # config.status will not change the timestamp on pg_config.h if it
@@ -827,25 +841,33 @@ $(top_builddir)/src/Makefile.global: $(top_srcdir)/src/Makefile.global.in $(top_
 $(top_builddir)/src/include/pg_config.h: $(top_builddir)/src/include/stamp-h ;
 
 $(top_builddir)/src/include/stamp-h: $(top_srcdir)/src/include/pg_config.h.in $(top_builddir)/config.status
-	cd $(top_builddir) && ./config.status src/include/pg_config.h
+	if test -z "$YB_PG_SKIP_CONFIG_STATUS"; then \
+		cd $(top_builddir) && ./config.status src/include/pg_config.h; \
+	fi
 
 # Also remake pg_config_ext.h from pg_config_ext.h.in, same logic as above.
 $(top_builddir)/src/include/pg_config_ext.h: $(top_builddir)/src/include/stamp-ext-h ;
 
 $(top_builddir)/src/include/stamp-ext-h: $(top_srcdir)/src/include/pg_config_ext.h.in $(top_builddir)/config.status
-	cd $(top_builddir) && ./config.status src/include/pg_config_ext.h
+	if test -z "$YB_PG_SKIP_CONFIG_STATUS"; then \
+		cd $(top_builddir) && ./config.status src/include/pg_config_ext.h; \
+	fi
 
 # Also remake ecpg_config.h from ecpg_config.h.in if the latter changed, same
 # logic as above.
 $(top_builddir)/src/interfaces/ecpg/include/ecpg_config.h: $(top_builddir)/src/interfaces/ecpg/include/stamp-h ;
 
  $(top_builddir)/src/interfaces/ecpg/include/stamp-h: $(top_builddir)/src/interfaces/ecpg/include/ecpg_config.h.in $(top_builddir)/config.status
-	cd $(top_builddir) && ./config.status src/interfaces/ecpg/include/ecpg_config.h
+	if test -z "$YB_PG_SKIP_CONFIG_STATUS"; then \
+		cd $(top_builddir) && ./config.status src/interfaces/ecpg/include/ecpg_config.h; \
+	fi
 
 # When configure changes, rerun configure with the same options as
 # last time. To change configure, you need to run autoconf manually.
 $(top_builddir)/config.status: $(top_srcdir)/configure
-	cd $(top_builddir) && ./config.status --recheck
+	if test -z "$YB_PG_SKIP_CONFIG_STATUS"; then \
+		cd $(top_builddir) && ./config.status --recheck; \
+	fi
 
 endif # not PGXS
 

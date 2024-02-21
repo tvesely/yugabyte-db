@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
 # This script builds unaccent.rules on standard output when given the
@@ -32,6 +32,9 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 
+yb_original_stdout = sys.stdout
+
+# yb_original_stdout = sys.stdout
 sys.stdout = codecs.getwriter('utf8')(sys.stdout.buffer)
 
 # The ranges of Unicode characters that we consider to be "plain letters".
@@ -284,3 +287,9 @@ if __name__ == "__main__":
         sys.exit(1)
 
     main(args)
+
+# Doctest throws the following error unless sys.stdout is restored:
+#   AttributeError: '_io.BufferedWriter' object has no attribute 'encoding'
+# original commit: https://github.com/yugabyte/yugabyte-db/commit/7526c698410dc7ba1c21ce0041357eb4444e5abb
+
+sys.stdout = yb_original_stdout

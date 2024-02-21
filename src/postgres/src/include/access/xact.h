@@ -22,6 +22,8 @@
 #include "storage/relfilenode.h"
 #include "storage/sinval.h"
 
+#include "yb/yql/pggate/ybc_pg_typedefs.h"
+
 /*
  * Maximum size of Global Transaction ID (including '\0').
  *
@@ -37,6 +39,8 @@
 #define XACT_READ_COMMITTED		1
 #define XACT_REPEATABLE_READ	2
 #define XACT_SERIALIZABLE		3
+
+#define YB_READ_COMMITTED_INTERNAL_SUB_TXN_NAME "yb_internal_txn_for_read_committed"
 
 extern PGDLLIMPORT int DefaultXactIsoLevel;
 extern PGDLLIMPORT int XactIsoLevel;
@@ -451,9 +455,17 @@ extern TimestampTz GetCurrentStatementStartTimestamp(void);
 extern TimestampTz GetCurrentTransactionStopTimestamp(void);
 extern void SetCurrentStatementStartTimestamp(void);
 extern int	GetCurrentTransactionNestLevel(void);
+extern const char* GetCurrentTransactionName(void);
 extern bool TransactionIdIsCurrentTransactionId(TransactionId xid);
 extern void CommandCounterIncrement(void);
 extern void ForceSyncCommit(void);
+extern int YBGetEffectivePggateIsolationLevel();
+extern void YBInitializeTransaction(void);
+extern void YBResetTransactionReadPoint(void);
+extern void YBRestartReadPoint(void);
+extern void YBCRestartWriteTransaction(void);
+extern void SetTxnWithPGRel(void);
+extern bool IsCurrentTxnWithPGRel(void);
 extern void StartTransactionCommand(void);
 extern void SaveTransactionCharacteristics(SavedTransactionCharacteristics *s);
 extern void RestoreTransactionCharacteristics(const SavedTransactionCharacteristics *s);
@@ -469,6 +481,7 @@ extern void ReleaseSavepoint(const char *name);
 extern void DefineSavepoint(const char *name);
 extern void RollbackToSavepoint(const char *name);
 extern void BeginInternalSubTransaction(const char *name);
+extern void BeginInternalSubTransactionForReadCommittedStatement();
 extern void ReleaseCurrentSubTransaction(void);
 extern void RollbackAndReleaseCurrentSubTransaction(void);
 extern bool IsSubTransaction(void);
@@ -527,4 +540,32 @@ extern void EnterParallelMode(void);
 extern void ExitParallelMode(void);
 extern bool IsInParallelMode(void);
 
+extern void YBMarkDataSent(void);
+extern void YBMarkDataNotSent(void);
+extern void YBMarkDataNotSentForCurrQuery(void);
+extern bool YBIsDataSent(void);
+extern bool YBIsDataSentForCurrQuery(void);
+
+/*
+ * Utilities for postponed pggate DDL statement handles, that can be
+ * executed after the YSQL DDL transaction has commited. To qualify for this
+ * the DDL must have the following properties:
+ *   1. It cannot be rolled back by abort (so we wait for commit to succeed).
+ *   2. It does not cause inconsistencies if it fails (i.e. after txn commit).
+ * Currently the main example is dropping DocDB objects (e.g. table/indexes)
+ * which we cannot roll back, and also does not cause inconsistency if it fails
+ * after YSQL-layer deleted the metadata entry for that object (because we do
+ * not reuse oids/uuids -- so objects remain simply orphaned/unused).
+ * Note: Orphaned DocDB objects will be best-effort cleaned by a DocDB (catalog
+ *       manager) background-cleanup job. This would eventually also roll back
+ *       failed (online) alter operations (#3979).
+ */
+extern void YBSaveDdlHandle(YBCPgStatement handle);
+extern List* YBGetDdlHandles(void);
+extern void YBClearDdlHandles(void);
+
+/*
+ * Utility for clearing transaction ID.
+*/
+extern void YbClearCurrentTransactionId(void);
 #endif							/* XACT_H */

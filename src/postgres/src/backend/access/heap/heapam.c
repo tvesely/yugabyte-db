@@ -71,6 +71,11 @@
 #include "utils/snapmgr.h"
 #include "utils/spccache.h"
 
+/* Yugabyte includes */
+#include "pg_yb_utils.h"
+#include "executor/ybcModifyTable.h"
+#include "access/yb_scan.h"
+#include "utils/builtins.h"
 
 static HeapTuple heap_prepare_insert(Relation relation, HeapTuple tup,
 									 TransactionId xid, CommandId cid, int options);
@@ -111,7 +116,6 @@ static XLogRecPtr log_heap_new_cid(Relation relation, HeapTuple tup);
 static HeapTuple ExtractReplicaIdentity(Relation rel, HeapTuple tup, bool key_required,
 										bool *copy);
 
-
 /*
  * Each tuple lock mode has a corresponding heavyweight lock, and one or two
  * corresponding MultiXactStatuses (one to merely lock tuples, another one to
@@ -129,7 +133,7 @@ static const struct
 	int			updstatus;
 }
 
-			tupleLockExtraInfo[MaxLockTupleMode + 1] =
+tupleLockExtraInfo[MaxLockTupleMode + 1] =
 {
 	{							/* LockTupleKeyShare */
 		AccessShareLock,
@@ -248,6 +252,8 @@ initscan(HeapScanDesc scan, ScanKey key, bool keep_startblock)
 		bpscan = (ParallelBlockTableScanDesc) scan->rs_base.rs_parallel;
 		scan->rs_nblocks = bpscan->phs_nblocks;
 	}
+	else if (RelationGetForm(scan->rs_base.rs_rd)->relkind == RELKIND_SEQUENCE)
+		scan->rs_nblocks = 1;
 	else
 		scan->rs_nblocks = RelationGetNumberOfBlocks(scan->rs_base.rs_rd);
 
@@ -452,9 +458,9 @@ heapgetpage(TableScanDesc sscan, BlockNumber page)
 		 lineoff <= lines;
 		 lineoff++, lpp++)
 	{
-		if (ItemIdIsNormal(lpp))
+    if (ItemIdIsNormal(lpp))
 		{
-			HeapTupleData loctup;
+      HeapTupleData loctup;
 			bool		valid;
 
 			loctup.t_tableOid = RelationGetRelid(scan->rs_base.rs_rd);
@@ -1145,6 +1151,12 @@ heap_beginscan(Relation relation, Snapshot snapshot,
 {
 	HeapScanDesc scan;
 
+	/* YB scan methods should only be used for tables that are handled by YugaByte. */
+	if (IsYBRelation(relation))
+	{
+		return ybc_heap_beginscan(relation, snapshot, nkeys, key, flags);
+	}
+
 	/*
 	 * increment relation ref count while scanning relation
 	 *
@@ -1262,9 +1274,14 @@ heap_rescan(TableScanDesc sscan, ScanKey key, bool set_params,
 void
 heap_endscan(TableScanDesc sscan)
 {
-	HeapScanDesc scan = (HeapScanDesc) sscan;
-
 	/* Note: no locking manipulations needed */
+
+	if (IsYBRelation(sscan->rs_rd))
+	{
+		return ybc_heap_endscan(sscan);
+	}
+
+	HeapScanDesc scan = (HeapScanDesc) sscan;
 
 	/*
 	 * unpin scan buffers
@@ -1295,6 +1312,12 @@ heap_endscan(TableScanDesc sscan)
 HeapTuple
 heap_getnext(TableScanDesc sscan, ScanDirection direction)
 {
+
+	if (IsYBRelation(sscan->rs_rd))
+	{
+		return ybc_heap_getnext(sscan);
+	}
+
 	HeapScanDesc scan = (HeapScanDesc) sscan;
 
 	/*
@@ -1344,6 +1367,18 @@ heap_getnext(TableScanDesc sscan, ScanDirection direction)
 bool
 heap_getnextslot(TableScanDesc sscan, ScanDirection direction, TupleTableSlot *slot)
 {
+	if (IsYBRelation(sscan->rs_rd))
+	{
+		HeapTuple tuple = ybc_heap_getnext(sscan);
+		if (!tuple)
+		{
+			ExecClearTuple(slot);
+			return false;
+		}
+		ExecStoreHeapTuple(tuple, slot, false /* shouldFree */);
+		return true;
+	}
+
 	HeapScanDesc scan = (HeapScanDesc) sscan;
 
 	/* Note: no locking manipulations needed */
@@ -1402,7 +1437,9 @@ heap_set_tidrange(TableScanDesc sscan, ItemPointer mintid,
 	 * of the relation.
 	 */
 	if (ItemPointerCompare(maxtid, &highestItem) < 0)
+	{
 		ItemPointerCopy(maxtid, &highestItem);
+	}
 
 	/*
 	 * If the given minimum TID is above the lowest possible TID in the
@@ -2032,6 +2069,14 @@ heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 	Buffer		vmbuffer = InvalidBuffer;
 	bool		all_visible_cleared = false;
 
+	if (IsYBRelation(relation))
+	{
+		ereport(ERROR,
+		        (errcode(ERRCODE_INTERNAL_ERROR), errmsg(
+				        "Operation not allowed in YugaByte mode %s",
+				        __func__)));
+	}
+
 	/* Cheap, simplistic check that the tuple matches the rel's rowtype. */
 	Assert(HeapTupleHeaderGetNatts(tup->t_data) <=
 		   RelationGetNumberOfAttributes(relation));
@@ -2279,6 +2324,13 @@ heap_multi_insert(Relation relation, TupleTableSlot **slots, int ntuples,
 	Size		saveFreeSpace;
 	bool		need_tuple_data = RelationIsLogicallyLogged(relation);
 	bool		need_cids = RelationIsAccessibleInLogicalDecoding(relation);
+
+	if (IsYBRelation(relation))
+	{
+		ereport(ERROR,
+		        (errcode(ERRCODE_INTERNAL_ERROR),
+				        errmsg("Operation not allowed in YugaByte mode")));
+	}
 
 	/* currently not needed (thus unsupported) for heap_multi_insert() */
 	AssertArg(!(options & HEAP_INSERT_NO_LOGICAL));
@@ -2683,6 +2735,13 @@ heap_delete(Relation relation, ItemPointer tid,
 	bool		all_visible_cleared = false;
 	HeapTuple	old_key_tuple = NULL;	/* replica identity of the tuple */
 	bool		old_key_copied = false;
+
+	if (IsYBRelation(relation))
+	{
+		YBC_LOG_WARNING("Ignoring unsupported tuple delete for rel %s",
+		                RelationGetRelationName(relation));
+		return TM_Ok; /* HeapTupleMayBeUpdated; */
+	}
 
 	Assert(ItemPointerIsValid(tid));
 
@@ -4292,6 +4351,12 @@ heap_lock_tuple(Relation relation, HeapTuple tuple,
 	tuple->t_data = (HeapTupleHeader) PageGetItem(page, lp);
 	tuple->t_len = ItemIdGetLength(lp);
 	tuple->t_tableOid = RelationGetRelid(relation);
+
+	/*
+	 * This will only be used for non-YB tuples (e.g. Temp tables) so we just
+	 * need to set the ybctid to 0 (NULL) here.
+	 */
+	HEAPTUPLE_YBCTID(tuple) = (Datum) 0;
 
 l3:
 	result = HeapTupleSatisfiesUpdate(tuple, cid, *buffer);
@@ -6001,9 +6066,15 @@ heap_abort_speculative(Relation relation, ItemPointer tid)
  * Note that the tuple updated here had better not come directly from the
  * syscache if the relation has a toast relation as this tuple could
  * include toast values that have been expanded, causing a failure here.
+ *
+ * If yb_shared_update is specified, this update will be done in every
+ * database (including template0 and template1). Such operation will assume
+ * the tuple is exactly the same in all databases.
+ * This is needed when creating shared relations.
+ * This flag should not be used during initdb bootstrap.
  */
 void
-heap_inplace_update(Relation relation, HeapTuple tuple)
+heap_inplace_update(Relation relation, HeapTuple tuple, bool yb_shared_update)
 {
 	Buffer		buffer;
 	Page		page;
@@ -6012,6 +6083,28 @@ heap_inplace_update(Relation relation, HeapTuple tuple)
 	HeapTupleHeader htup;
 	uint32		oldlen;
 	uint32		newlen;
+
+	if (IsYBRelation(relation))
+	{
+		if (yb_shared_update)
+		{
+			if (!IsYsqlUpgrade)
+				elog(ERROR, "shared update cannot be done outside of YSQL upgrade");
+
+			YB_FOR_EACH_DB(pg_db_tuple)
+			{
+				Oid dboid = ((Form_pg_database) GETSTRUCT(pg_db_tuple))->oid;
+				/* YB doesn't use PG locks so it's okay not to take them. */
+				YBCUpdateSysCatalogTupleForDb(dboid, relation, NULL /* oldtuple */, tuple);
+			}
+			YB_FOR_EACH_DB_END;
+		}
+		else
+		{
+			YBCUpdateSysCatalogTuple(relation, NULL /* oldtuple */, tuple);
+		}
+		return;
+	}
 
 	/*
 	 * For now, we don't allow parallel updates.  Unlike a regular update,
@@ -7839,8 +7932,14 @@ index_delete_sort(TM_IndexDeleteOp *delstate)
 	const int	gaps[9] = {1968, 861, 336, 112, 48, 21, 7, 3, 1};
 
 	/* Think carefully before changing anything here -- keep swaps cheap */
+#ifdef NEIL
+	/* NEIL: Revisit this to have a permanent fix.
+	 * - ItemPointer is part of TM_IndexDelete.
+	 * - yb_item is added to ItemPointer and increase the size of TM_IndexDelete.
+	 */
 	StaticAssertStmt(sizeof(TM_IndexDelete) <= 8,
 					 "element size exceeds 8 bytes");
+#endif
 
 	for (int g = 0; g < lengthof(gaps); g++)
 	{

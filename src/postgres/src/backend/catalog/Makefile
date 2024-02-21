@@ -13,6 +13,8 @@ subdir = src/backend/catalog
 top_builddir = ../../..
 include $(top_builddir)/src/Makefile.global
 
+SUBDIRS = yb_catalog
+
 OBJS = \
 	aclchk.o \
 	catalog.o \
@@ -72,7 +74,9 @@ CATALOG_HEADERS := \
 	pg_collation.h pg_parameter_acl.h pg_partitioned_table.h \
 	pg_range.h pg_transform.h \
 	pg_sequence.h pg_publication.h pg_publication_namespace.h \
-	pg_publication_rel.h pg_subscription.h pg_subscription_rel.h
+	pg_publication_rel.h pg_subscription.h pg_subscription_rel.h \
+	pg_yb_catalog_version.h pg_yb_migration.h \
+    pg_yb_profile.h pg_yb_role_profile.h pg_yb_tablegroup.h
 
 GENERATED_HEADERS := $(CATALOG_HEADERS:%.h=%_d.h) schemapg.h system_fk_info.h
 
@@ -84,14 +88,14 @@ POSTGRES_BKI_DATA = $(addprefix $(top_srcdir)/src/include/catalog/,\
 	pg_cast.dat pg_class.dat pg_collation.dat pg_conversion.dat \
 	pg_database.dat pg_language.dat \
 	pg_namespace.dat pg_opclass.dat pg_operator.dat pg_opfamily.dat \
-	pg_proc.dat pg_range.dat pg_tablespace.dat \
+	pg_proc.dat pg_range.dat pg_tablespace.dat pg_yb_tablegroup.dat \
 	pg_ts_config.dat pg_ts_config_map.dat pg_ts_dict.dat pg_ts_parser.dat \
-	pg_ts_template.dat pg_type.dat \
+	pg_ts_template.dat pg_type.dat pg_yb_catalog_version.dat pg_yb_migration.dat \
 	)
 
 all: distprep generated-header-symlinks
 
-distprep: bki-stamp
+distprep: bki-stamp yb_bki-stamp
 
 .PHONY: generated-header-symlinks
 
@@ -110,11 +114,16 @@ bki-stamp: genbki.pl Catalog.pm $(POSTGRES_BKI_SRCS) $(POSTGRES_BKI_DATA) $(top_
 		--set-version=$(MAJORVERSION) $(POSTGRES_BKI_SRCS)
 	touch $@
 
+yb_bki-stamp: yb_genbki.pl Catalog.pm $(POSTGRES_BKI_SRCS) $(POSTGRES_BKI_DATA) $(top_srcdir)/configure.ac
+	$(PERL) $< --include-path=$(top_srcdir)/src/include/ \
+		--set-version=$(MAJORVERSION) $(POSTGRES_BKI_SRCS)
+	touch $@
+
 # The generated headers must all be symlinked into builddir/src/include/,
 # using absolute links for the reasons explained in src/backend/Makefile.
 # We use header-stamp to record that we've done this because the symlinks
 # themselves may appear older than bki-stamp.
-$(top_builddir)/src/include/catalog/header-stamp: bki-stamp
+$(top_builddir)/src/include/catalog/header-stamp: bki-stamp yb_bki-stamp
 	prereqdir=`cd '$(dir $<)' >/dev/null && pwd` && \
 	cd '$(dir $@)' && for file in $(GENERATED_HEADERS); do \
 	  rm -f $$file && $(LN_S) "$$prereqdir/$$file" . ; \
@@ -123,11 +132,13 @@ $(top_builddir)/src/include/catalog/header-stamp: bki-stamp
 
 # Note: installation of generated headers is handled elsewhere
 .PHONY: install-data
-install-data: bki-stamp installdirs
+install-data: bki-stamp yb_bki-stamp installdirs
 	$(INSTALL_DATA) $(call vpathsearch,postgres.bki) '$(DESTDIR)$(datadir)/postgres.bki'
+	$(INSTALL_DATA) $(call vpathsearch,yb_postgres.bki) '$(DESTDIR)$(datadir)/yb_postgres.bki'
 	$(INSTALL_DATA) $(call vpathsearch,system_constraints.sql) '$(DESTDIR)$(datadir)/system_constraints.sql'
 	$(INSTALL_DATA) $(srcdir)/system_functions.sql '$(DESTDIR)$(datadir)/system_functions.sql'
 	$(INSTALL_DATA) $(srcdir)/system_views.sql '$(DESTDIR)$(datadir)/system_views.sql'
+	$(INSTALL_DATA) $(srcdir)/yb_system_views.sql '$(DESTDIR)$(datadir)/yb_system_views.sql'
 	$(INSTALL_DATA) $(srcdir)/information_schema.sql '$(DESTDIR)$(datadir)/information_schema.sql'
 	$(INSTALL_DATA) $(srcdir)/sql_features.txt '$(DESTDIR)$(datadir)/sql_features.txt'
 
@@ -136,11 +147,11 @@ installdirs:
 
 .PHONY: uninstall-data
 uninstall-data:
-	rm -f $(addprefix '$(DESTDIR)$(datadir)'/, postgres.bki system_constraints.sql system_functions.sql system_views.sql information_schema.sql sql_features.txt)
+	rm -f $(addprefix '$(DESTDIR)$(datadir)'/, postgres.bki yb_postgres.bki system_constraints.sql system_functions.sql system_views.sql information_schema.sql sql_features.txt)
 
 # postgres.bki, system_constraints.sql, and the generated headers are
 # in the distribution tarball, so they are not cleaned here.
 clean:
 
 maintainer-clean: clean
-	rm -f bki-stamp postgres.bki system_constraints.sql $(GENERATED_HEADERS)
+	rm -f bki-stamp yb_bki-stamp postgres.bki yb_postgres.bki system_constraints.sql $(GENERATED_HEADERS)

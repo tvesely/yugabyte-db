@@ -116,6 +116,9 @@
 #include "storage/lmgr.h"
 #include "utils/snapmgr.h"
 
+/* Yugabyte includes */
+#include "executor/ybcModifyTable.h"
+
 /* waitMode argument to check_exclusion_or_unique_constraint() */
 typedef enum
 {
@@ -287,7 +290,8 @@ ExecInsertIndexTuples(ResultRelInfo *resultRelInfo,
 					  bool update,
 					  bool noDupErr,
 					  bool *specConflict,
-					  List *arbiterIndexes)
+					  List *arbiterIndexes,
+					  List *no_update_index_list)
 {
 	ItemPointer tupleid = &slot->tts_tid;
 	List	   *result = NIL;
@@ -299,6 +303,7 @@ ExecInsertIndexTuples(ResultRelInfo *resultRelInfo,
 	ExprContext *econtext;
 	Datum		values[INDEX_MAX_KEYS];
 	bool		isnull[INDEX_MAX_KEYS];
+	bool		isYBRelation;
 
 	Assert(ItemPointerIsValid(tupleid));
 
@@ -309,6 +314,7 @@ ExecInsertIndexTuples(ResultRelInfo *resultRelInfo,
 	relationDescs = resultRelInfo->ri_IndexRelationDescs;
 	indexInfoArray = resultRelInfo->ri_IndexRelationInfo;
 	heapRelation = resultRelInfo->ri_RelationDesc;
+	isYBRelation = IsYBRelation(heapRelation);
 
 	/* Sanity check: slot must belong to the same rel as the resultRelInfo. */
 	Assert(slot->tts_tableOid == RelationGetRelid(heapRelation));
@@ -334,10 +340,27 @@ ExecInsertIndexTuples(ResultRelInfo *resultRelInfo,
 		bool		indexUnchanged;
 		bool		satisfiesConstraint;
 
-		if (indexRelation == NULL)
-			continue;
+		/*
+		 * For an update command check if we need to skip index. For that purpose,
+		 * we check if the relid of the index is part of the skip list.
+		 */
+		if (indexRelation == NULL || (no_update_index_list &&
+		    list_member_oid(no_update_index_list, RelationGetRelid(indexRelation))))
+		continue;
 
 		indexInfo = indexInfoArray[i];
+		Assert(indexInfo->ii_ReadyForInserts ==
+			   indexRelation->rd_index->indisready);
+
+		/*
+		 * No need to update YugaByte primary key which is intrinic part of
+		 * the base table.
+		 *
+		 * TODO(neil) The following YB check might not be needed due to later work on indexes.
+		 * We keep this check for now as this bugfix will be backported to ealier releases.
+		 */
+		if (isYBRelation && indexRelation->rd_index->indisprimary)
+			continue;
 
 		/* If the index is marked as read-only, ignore it */
 		if (!indexInfo->ii_ReadyForInserts)
@@ -420,7 +443,8 @@ ExecInsertIndexTuples(ResultRelInfo *resultRelInfo,
 						 heapRelation,	/* heap relation */
 						 checkUnique,	/* type of uniqueness check to do */
 						 indexUnchanged,	/* UPDATE without logical change? */
-						 indexInfo);	/* index AM may need this */
+						 indexInfo,
+						 false /* yb_shared_insert */);
 
 		/*
 		 * If the index has an associated exclusion constraint, check that.
@@ -482,6 +506,154 @@ ExecInsertIndexTuples(ResultRelInfo *resultRelInfo,
 	}
 
 	return result;
+}
+
+/* ----------------------------------------------------------------
+ *		ExecDeleteIndexTuples
+ *
+ *		This routine takes care of deleting index tuples
+ *		from all the relations indexing the result relation
+ *		when a heap tuple is updated or deleted in the result relation.
+ *      This is used only for relations and indexes backed by YugabyteDB.
+ * ----------------------------------------------------------------
+ */
+void
+ExecDeleteIndexTuples(ResultRelInfo *resultRelInfo, Datum ybctid, HeapTuple tuple, EState *estate)
+{
+  ExecDeleteIndexTuplesOptimized(resultRelInfo, ybctid, tuple, estate,
+								 NIL /* no_update_index_list */);
+}
+
+void
+ExecDeleteIndexTuplesOptimized(ResultRelInfo *resultRelInfo,
+							   Datum ybctid,
+                               HeapTuple tuple,
+                               EState *estate,
+                               List *no_update_index_list)
+{
+	int			i;
+	int			numIndices;
+	RelationPtr relationDescs;
+	Relation	heapRelation;
+	IndexInfo **indexInfoArray;
+	ExprContext *econtext;
+	TupleTableSlot	*slot;
+	Datum		values[INDEX_MAX_KEYS];
+	bool		isnull[INDEX_MAX_KEYS];
+	bool		isYBRelation;
+
+	/*
+	 * Get information from the result relation info structure.
+	 */
+	numIndices = resultRelInfo->ri_NumIndices;
+	relationDescs = resultRelInfo->ri_IndexRelationDescs;
+	indexInfoArray = resultRelInfo->ri_IndexRelationInfo;
+	heapRelation = resultRelInfo->ri_RelationDesc;
+	isYBRelation = IsYBRelation(heapRelation);
+
+	/*
+	 * We will use the EState's per-tuple context for evaluating predicates
+	 * and index expressions (creating it if it's not already there).
+	 */
+	econtext = GetPerTupleExprContext(estate);
+
+	/*
+	 * Arrange for econtext's scan tuple to be the tuple under test using
+	 * a temporary slot.
+	 */
+	slot = MakeSingleTupleTableSlot(RelationGetDescr(heapRelation), &TTSOpsHeapTuple);
+	slot = ExecStoreHeapTuple(tuple, slot, false);
+	econtext->ecxt_scantuple = slot;
+
+	/*
+	 * For each index, form the index tuple to delete and delete it from
+	 * the index.
+	 */
+	for (i = 0; i < numIndices; i++)
+	{
+		Relation	indexRelation = relationDescs[i];
+		IndexInfo  *indexInfo;
+
+		/*
+		 * For an update command check if we need to skip index.
+		 * For that purpose, we check if the relid of the index is part of the skip list.
+		 */
+		if (indexRelation == NULL || (no_update_index_list &&
+		    list_member_oid(no_update_index_list, RelationGetRelid(indexRelation))))
+		  continue;
+
+		/*
+		 * No need to update YugaByte primary key which is intrinic part of
+		 * the base table.
+		 *
+		 * TODO(neil) This function is obsolete and removed from Postgres's original code.
+		 * - We need to update YugaByte's code path to stop using this function.
+		 * - As a result, we don't need distinguish between Postgres and YugaByte here.
+		 *   I update this code only for clarity.
+		 */
+		if (isYBRelation && indexRelation->rd_index->indisprimary)
+			continue;
+
+		indexInfo = indexInfoArray[i];
+		Assert(indexInfo->ii_ReadyForInserts ==
+			   indexRelation->rd_index->indisready);
+
+		/*
+		 * If the index is not ready for deletes and index backfill is enabled,
+		 * ignore it
+		 */
+		if (!*YBCGetGFlags()->ysql_disable_index_backfill && !indexRelation->rd_index->indislive)
+			continue;
+		/*
+		 * If the index is marked as read-only and index backfill is disabled,
+		 * ignore it
+		 */
+		if (*YBCGetGFlags()->ysql_disable_index_backfill && !indexInfo->ii_ReadyForInserts)
+			continue;
+
+		/* Check for partial index */
+		if (indexInfo->ii_Predicate != NIL)
+		{
+			ExprState  *predicate;
+
+			/*
+			 * If predicate state not set up yet, create it (in the estate's
+			 * per-query context)
+			 */
+			predicate = indexInfo->ii_PredicateState;
+			if (predicate == NULL)
+			{
+				predicate = ExecPrepareQual(indexInfo->ii_Predicate, estate);
+				indexInfo->ii_PredicateState = predicate;
+			}
+
+			/* Skip this index-update if the predicate isn't satisfied */
+			if (!ExecQual(predicate, econtext))
+				continue;
+		}
+
+		/*
+		 * FormIndexDatum fills in its values and isnull parameters with the
+		 * appropriate values for the column(s) of the index.
+		 */
+		FormIndexDatum(indexInfo,
+					   slot,
+					   estate,
+					   values,
+					   isnull);
+
+		MemoryContext oldContext = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
+		yb_index_delete(indexRelation, /* index relation */
+						values,	/* array of index Datums */
+						isnull,	/* null flags */
+						ybctid,	/* ybctid */
+						heapRelation,	/* heap relation */
+						indexInfo);	/* index AM may need this */
+		MemoryContextSwitchTo(oldContext);
+	}
+
+	/* Drop the temporary slot */
+	ExecDropSingleTupleTableSlot(slot);
 }
 
 /* ----------------------------------------------------------------
@@ -551,6 +723,8 @@ ExecCheckIndexConstraints(ResultRelInfo *resultRelInfo, TupleTableSlot *slot,
 			continue;
 
 		indexInfo = indexInfoArray[i];
+		Assert(indexInfo->ii_ReadyForInserts ==
+			   indexRelation->rd_index->indisready);
 
 		if (!indexInfo->ii_Unique && !indexInfo->ii_ExclusionOps)
 			continue;
@@ -744,6 +918,10 @@ check_exclusion_or_unique_constraint(Relation heap, Relation index,
 	econtext = GetPerTupleExprContext(estate);
 	save_scantuple = econtext->ecxt_scantuple;
 	econtext->ecxt_scantuple = existing_slot;
+	if (estate->yb_conflict_slot != NULL) {
+		ExecDropSingleTupleTableSlot(estate->yb_conflict_slot);
+		estate->yb_conflict_slot = NULL;
+	}
 
 	/*
 	 * May have to restart scan from this point if a potential conflict is
@@ -806,25 +984,32 @@ retry:
 		 * happen often enough to be worth trying harder, and anyway we don't
 		 * want to hold any index internal locks while waiting.
 		 */
-		xwait = TransactionIdIsValid(DirtySnapshot.xmin) ?
-			DirtySnapshot.xmin : DirtySnapshot.xmax;
+		/*
+		 * YugaByte manages transaction at a lower level, so we don't need to execute the following
+		 * code block.
+		 * TODO(Mikhail) Verify correctness in YugaByte transaction management for on-conflict.
+		 */
+		if (!IsYugaByteEnabled()) {
+			xwait = TransactionIdIsValid(DirtySnapshot.xmin) ?
+				DirtySnapshot.xmin : DirtySnapshot.xmax;
 
-		if (TransactionIdIsValid(xwait) &&
-			(waitMode == CEOUC_WAIT ||
-			 (waitMode == CEOUC_LIVELOCK_PREVENTING_WAIT &&
-			  DirtySnapshot.speculativeToken &&
-			  TransactionIdPrecedes(GetCurrentTransactionId(), xwait))))
-		{
-			reason_wait = indexInfo->ii_ExclusionOps ?
-				XLTW_RecheckExclusionConstr : XLTW_InsertIndex;
-			index_endscan(index_scan);
-			if (DirtySnapshot.speculativeToken)
-				SpeculativeInsertionWait(DirtySnapshot.xmin,
-										 DirtySnapshot.speculativeToken);
-			else
-				XactLockTableWait(xwait, heap,
-								  &existing_slot->tts_tid, reason_wait);
-			goto retry;
+			if (TransactionIdIsValid(xwait) &&
+				(waitMode == CEOUC_WAIT ||
+				 (waitMode == CEOUC_LIVELOCK_PREVENTING_WAIT &&
+				  DirtySnapshot.speculativeToken &&
+				  TransactionIdPrecedes(GetCurrentTransactionId(), xwait))))
+			{
+				reason_wait = indexInfo->ii_ExclusionOps ?
+					XLTW_RecheckExclusionConstr : XLTW_InsertIndex;
+				index_endscan(index_scan);
+				if (DirtySnapshot.speculativeToken)
+					SpeculativeInsertionWait(DirtySnapshot.xmin,
+											 DirtySnapshot.speculativeToken);
+				else
+					XactLockTableWait(xwait, heap,
+									  &existing_slot->tts_tid, reason_wait);
+				goto retry;
+			}
 		}
 
 		/*
@@ -834,6 +1019,9 @@ retry:
 		if (violationOK)
 		{
 			conflict = true;
+			if (IsYBRelation(heap)) {
+				estate->yb_conflict_slot = existing_slot;
+			}
 			if (conflictTid)
 				*conflictTid = existing_slot->tts_tid;
 			break;
@@ -877,9 +1065,9 @@ retry:
 	 */
 
 	econtext->ecxt_scantuple = save_scantuple;
-
-	ExecDropSingleTupleTableSlot(existing_slot);
-
+	if (estate->yb_conflict_slot == NULL) {
+		ExecDropSingleTupleTableSlot(existing_slot);
+	}
 	return !conflict;
 }
 

@@ -45,6 +45,12 @@
 #include "utils/rel.h"
 #include "utils/relmapper.h"
 
+#include "bootstrap/ybcbootstrap.h"
+#include "catalog/pg_database.h"
+#include "commands/ybccmds.h"
+#include "executor/ybcModifyTable.h"
+#include "pg_yb_utils.h"
+
 uint32		bootstrap_data_checksum_version = 0;	/* No checksum */
 
 
@@ -355,13 +361,28 @@ BootstrapModeMain(int argc, char *argv[], bool check_only)
 	if (pg_link_canary_is_frontend())
 		elog(ERROR, "backend is incorrectly linked to frontend functions");
 
-	InitPostgres(NULL, InvalidOid, NULL, InvalidOid, false, false, NULL);
+	InitPostgres(NULL, InvalidOid, NULL, InvalidOid, false, false, NULL, NULL);
 
 	/* Initialize stuff for bootstrap-file processing */
 	for (i = 0; i < MAXATTR; i++)
 	{
 		attrtypes[i] = NULL;
 		Nulls[i] = false;
+	}
+
+
+	/*
+	 * In YugaByte we only need to create the template1 database
+	 * (corresponding to creating the "base/1" subdir as its oid is hardcoded).
+	 */
+	if (IsYugaByteEnabled())
+	{
+		YBCCreateDatabase(Template1DbOid,
+		                  "template1",
+		                  InvalidOid,
+		                  YbFirstBootstrapObjectId,
+		                  false /* colocated */,
+		                  NULL /* retry_on_oid_collision */);
 	}
 
 	/*
@@ -371,11 +392,15 @@ BootstrapModeMain(int argc, char *argv[], bool check_only)
 	boot_yyparse();
 	CommitTransactionCommand();
 
-	/*
-	 * We should now know about all mapped relations, so it's okay to write
-	 * out the initial relation mapping files.
-	 */
-	RelationMapFinishBootstrap();
+	/* We do not use a relation map file in YugaByte mode yet */
+	if (!IsYugaByteEnabled())
+	{
+		/*
+		 * We should now know about all mapped relations, so it's okay to write
+		 * out the initial relation mapping files.
+		 */
+		RelationMapFinishBootstrap();
+	}
 
 	/* Clean up and exit */
 	cleanup();
@@ -620,9 +645,14 @@ InsertOneTuple(void)
 
 	tupDesc = CreateTupleDesc(numattr, attrtypes);
 	tuple = heap_form_tuple(tupDesc, values, Nulls);
+
+	if (IsYugaByteEnabled())
+		YBCExecuteInsert(boot_reldesc, tupDesc, tuple, ONCONFLICT_NONE);
+	else
+		simple_heap_insert(boot_reldesc, tuple);
+
 	pfree(tupDesc);				/* just free's tupDesc, not the attrtypes */
 
-	simple_heap_insert(boot_reldesc, tuple);
 	heap_freetuple(tuple);
 	elog(DEBUG4, "row inserted");
 

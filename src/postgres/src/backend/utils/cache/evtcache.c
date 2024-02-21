@@ -31,6 +31,8 @@
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 
+#include "pg_yb_utils.h"
+
 typedef enum
 {
 	ETCS_NEEDS_REBUILD,
@@ -81,7 +83,6 @@ BuildEventTriggerCache(void)
 	HTAB	   *cache;
 	MemoryContext oldcontext;
 	Relation	rel;
-	Relation	irel;
 	SysScanDesc scan;
 
 	if (EventTriggerCacheContext != NULL)
@@ -127,9 +128,9 @@ BuildEventTriggerCache(void)
 	/*
 	 * Prepare to scan pg_event_trigger in name order.
 	 */
-	rel = relation_open(EventTriggerRelationId, AccessShareLock);
-	irel = index_open(EventTriggerNameIndexId, AccessShareLock);
-	scan = systable_beginscan_ordered(rel, irel, NULL, 0, NULL);
+	rel  = relation_open(EventTriggerRelationId, AccessShareLock);
+	scan = systable_beginscan(rel, EventTriggerNameIndexId, true /* indexOK */,
+	                          NULL, 0, NULL);
 
 	/*
 	 * Build a cache item for each pg_event_trigger tuple, and append each one
@@ -137,18 +138,18 @@ BuildEventTriggerCache(void)
 	 */
 	for (;;)
 	{
-		HeapTuple	tup;
-		Form_pg_event_trigger form;
-		char	   *evtevent;
-		EventTriggerEvent event;
-		EventTriggerCacheItem *item;
-		Datum		evttags;
-		bool		evttags_isnull;
+		HeapTuple              tup;
+		Form_pg_event_trigger  form;
+		char                   *evtevent;
+		EventTriggerEvent      event;
+		EventTriggerCacheItem  *item;
+		Datum                  evttags;
+		bool                   evttags_isnull;
 		EventTriggerCacheEntry *entry;
-		bool		found;
+		bool                   found;
 
 		/* Get next tuple. */
-		tup = systable_getnext_ordered(scan, ForwardScanDirection);
+		tup = systable_getnext(scan);
 		if (!HeapTupleIsValid(tup))
 			break;
 
@@ -158,7 +159,7 @@ BuildEventTriggerCache(void)
 			continue;
 
 		/* Decode event name. */
-		evtevent = NameStr(form->evtevent);
+		evtevent  = NameStr(form->evtevent);
 		if (strcmp(evtevent, "ddl_command_start") == 0)
 			event = EVT_DDLCommandStart;
 		else if (strcmp(evtevent, "ddl_command_end") == 0)
@@ -172,7 +173,7 @@ BuildEventTriggerCache(void)
 
 		/* Allocate new cache item. */
 		item = palloc0(sizeof(EventTriggerCacheItem));
-		item->fnoid = form->evtfoid;
+		item->fnoid   = form->evtfoid;
 		item->enabled = form->evtenabled;
 
 		/* Decode and sort tags array. */
@@ -190,8 +191,17 @@ BuildEventTriggerCache(void)
 	}
 
 	/* Done with pg_event_trigger scan. */
-	systable_endscan_ordered(scan);
-	index_close(irel, AccessShareLock);
+	systable_endscan(scan);
+
+	/*
+	 * Also manually clean up the yb_memctx used for the scan.
+	 * Normally this gets destroyed when the PG memory context is deleted.
+	 * But here we are in a cache memory context which is permanent.
+	 */
+	if (EventTriggerCacheContext->yb_memctx)
+		HandleYBStatus(YBCPgDestroyMemctx(EventTriggerCacheContext->yb_memctx));
+	EventTriggerCacheContext->yb_memctx = NULL;
+
 	relation_close(rel, AccessShareLock);
 
 	/* Restore previous memory context. */

@@ -154,6 +154,9 @@
 #include "utils/snapmgr.h"
 #include "utils/timestamp.h"
 
+/* YB includes. */
+#include "pg_yb_utils.h"
+
 
 /*
  * Maximum size of a NOTIFY payload, including terminating NULL.  This
@@ -590,6 +593,9 @@ AsyncShmemInit(void)
 Datum
 pg_notify(PG_FUNCTION_ARGS)
 {
+	// Note: Async_Notify is replaced by NOOP
+	YBRaiseNotSupportedSignal("NOTIFY not supported yet and will be ignored", 1872 /* issue_no */, WARNING);
+
 	const char *channel;
 	const char *payload;
 
@@ -624,6 +630,10 @@ pg_notify(PG_FUNCTION_ARGS)
 void
 Async_Notify(const char *channel, const char *payload)
 {
+	// (YB) Note: This function is replaced by NOOP, but we don't raise warning here to avoid
+	// double warning message when using "NOTIFY channel".
+	return;
+
 	int			my_level = GetCurrentTransactionNestLevel();
 	size_t		channel_len;
 	size_t		payload_len;
@@ -771,6 +781,10 @@ queue_listen(ListenActionKind action, const char *channel)
 void
 Async_Listen(const char *channel)
 {
+	// (YB) Note: This function is replaced by NOOP, but we don't raise warning here to avoid
+	// double warning message when using "LISTEN channel".
+	return;
+
 	if (Trace_notify)
 		elog(DEBUG1, "Async_Listen(%s,%d)", channel, MyProcPid);
 
@@ -785,6 +799,10 @@ Async_Listen(const char *channel)
 void
 Async_Unlisten(const char *channel)
 {
+	// (YB) Note: This function is replaced by NOOP, but we don't raise warning here to avoid
+	// double warning message when using "UNLISTEN channel".
+	return;
+
 	if (Trace_notify)
 		elog(DEBUG1, "Async_Unlisten(%s,%d)", channel, MyProcPid);
 
@@ -803,6 +821,10 @@ Async_Unlisten(const char *channel)
 void
 Async_UnlistenAll(void)
 {
+	// (YB) Note: This function is replaced by NOOP, but we don't raise warning here to avoid
+	// double warning message when using "UNLISTEN *".
+	return;
+
 	if (Trace_notify)
 		elog(DEBUG1, "Async_UnlistenAll(%d)", MyProcPid);
 
@@ -2337,7 +2359,7 @@ AsyncExistsPendingNotify(Notification *n)
  * Add a notification event to a pre-existing pendingNotifies list.
  *
  * Because pendingNotifies->events is already nonempty, this works
- * correctly no matter what CurrentMemoryContext is.
+ * correctly no matter what GetCurrentMemoryContext() is.
  */
 static void
 AddEventToPendingNotifies(Notification *n)

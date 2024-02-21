@@ -1322,7 +1322,7 @@ lockTableForWorker(ArchiveHandle *AH, TocEntry *te)
 	if (!res || PQresultStatus(res) != PGRES_COMMAND_OK)
 		pg_fatal("could not obtain lock on relation \"%s\"\n"
 				 "This usually means that someone requested an ACCESS EXCLUSIVE lock "
-				 "on the table after the pg_dump parent process had gotten the "
+				 "on the table after the ysql_dump parent process had gotten the "
 				 "initial ACCESS SHARE lock on the table.", qualId);
 
 	PQclear(res);

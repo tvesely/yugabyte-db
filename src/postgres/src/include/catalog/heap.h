@@ -49,6 +49,7 @@ typedef struct CookedConstraint
 extern Relation heap_create(const char *relname,
 							Oid relnamespace,
 							Oid reltablespace,
+							Oid reltablegroup,
 							Oid relid,
 							Oid relfilenode,
 							Oid accessmtd,
@@ -65,6 +66,7 @@ extern Relation heap_create(const char *relname,
 extern Oid	heap_create_with_catalog(const char *relname,
 									 Oid relnamespace,
 									 Oid reltablespace,
+									 Oid reltablegroup,
 									 Oid relid,
 									 Oid reltypeid,
 									 Oid reloftypeid,
@@ -82,7 +84,8 @@ extern Oid	heap_create_with_catalog(const char *relname,
 									 bool allow_system_table_mods,
 									 bool is_internal,
 									 Oid relrewrite,
-									 ObjectAddress *typaddress);
+									 ObjectAddress *typaddress,
+									 bool yb_use_initdb_acl);
 
 extern void heap_drop_with_catalog(Oid relid);
 
@@ -98,7 +101,8 @@ extern void InsertPgAttributeTuples(Relation pg_attribute_rel,
 									TupleDesc tupdesc,
 									Oid new_rel_oid,
 									Datum *attoptions,
-									CatalogIndexState indstate);
+									CatalogIndexState indstate,
+									bool yb_relisshared);
 
 extern void InsertPgClassTuple(Relation pg_class_desc,
 							   Relation new_rel_desc,
@@ -155,5 +159,7 @@ extern void StorePartitionKey(Relation rel,
 extern void RemovePartitionKeyByRelId(Oid relid);
 extern void StorePartitionBound(Relation rel, Relation parent,
 								PartitionBoundSpec *bound);
+
+Node *YbCookConstraint(ParseState *pstate, Node *raw_constraint, char *relname);
 
 #endif							/* HEAP_H */

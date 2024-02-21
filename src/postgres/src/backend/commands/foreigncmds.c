@@ -39,6 +39,9 @@
 #include "utils/rel.h"
 #include "utils/syscache.h"
 
+/* YB includes. */
+#include "pg_yb_utils.h"
+
 
 typedef struct
 {
@@ -83,11 +86,11 @@ optionListToArray(List *options)
 
 		astate = accumArrayResult(astate, PointerGetDatum(t),
 								  false, TEXTOID,
-								  CurrentMemoryContext);
+								  GetCurrentMemoryContext());
 	}
 
 	if (astate)
-		return makeArrayResult(astate, CurrentMemoryContext);
+		return makeArrayResult(astate, GetCurrentMemoryContext());
 
 	return PointerGetDatum(NULL);
 }
@@ -215,20 +218,22 @@ AlterForeignDataWrapperOwner_internal(Relation rel, HeapTuple tup, Oid newOwnerI
 	form = (Form_pg_foreign_data_wrapper) GETSTRUCT(tup);
 
 	/* Must be a superuser to change a FDW owner */
-	if (!superuser())
+	if (!IsYbFdwUser(GetUserId()) && !superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 errmsg("permission denied to change owner of foreign-data wrapper \"%s\"",
 						NameStr(form->fdwname)),
-				 errhint("Must be superuser to change owner of a foreign-data wrapper.")));
+				 errhint("Must be superuser or a member of the yb_fdw "
+				 		 "role to change owner of a foreign-data wrapper.")));
 
 	/* New owner must also be a superuser */
-	if (!superuser_arg(newOwnerId))
+	if (!IsYbFdwUser(newOwnerId) && !superuser_arg(newOwnerId))
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 errmsg("permission denied to change owner of foreign-data wrapper \"%s\"",
 						NameStr(form->fdwname)),
-				 errhint("The owner of a foreign-data wrapper must be a superuser.")));
+				 errhint("Must be superuser or a member of the yb_fdw "
+				 		 "role to change owner of a foreign-data wrapper.")));
 
 	if (form->fdwowner != newOwnerId)
 	{
@@ -350,7 +355,7 @@ AlterForeignServerOwner_internal(Relation rel, HeapTuple tup, Oid newOwnerId)
 	if (form->srvowner != newOwnerId)
 	{
 		/* Superusers can always do it */
-		if (!superuser())
+		if (!IsYbFdwUser(GetUserId()) && !superuser())
 		{
 			Oid			srvId;
 			AclResult	aclresult;
@@ -574,12 +579,13 @@ CreateForeignDataWrapper(ParseState *pstate, CreateFdwStmt *stmt)
 	rel = table_open(ForeignDataWrapperRelationId, RowExclusiveLock);
 
 	/* Must be superuser */
-	if (!superuser())
+	if (!IsYbFdwUser(GetUserId()) && !superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 errmsg("permission denied to create foreign-data wrapper \"%s\"",
 						stmt->fdwname),
-				 errhint("Must be superuser to create a foreign-data wrapper.")));
+				 errhint("Must be superuser or a member of the yb_fdw "
+				 		 "role to create a foreign-data wrapper.")));
 
 	/* For now the owner cannot be specified on create. Use effective user ID. */
 	ownerId = GetUserId();
@@ -691,12 +697,13 @@ AlterForeignDataWrapper(ParseState *pstate, AlterFdwStmt *stmt)
 	rel = table_open(ForeignDataWrapperRelationId, RowExclusiveLock);
 
 	/* Must be superuser */
-	if (!superuser())
+	if (!IsYbFdwUser(GetUserId()) && !superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 errmsg("permission denied to alter foreign-data wrapper \"%s\"",
 						stmt->fdwname),
-				 errhint("Must be superuser to alter a foreign-data wrapper.")));
+				 errhint("Must be superuser or a member of the yb_fdw role to "
+				 		 "alter a foreign-data wrapper.")));
 
 	tp = SearchSysCacheCopy1(FOREIGNDATAWRAPPERNAME,
 							 CStringGetDatum(stmt->fdwname));
@@ -830,6 +837,11 @@ AlterForeignDataWrapper(ParseState *pstate, AlterFdwStmt *stmt)
 	return myself;
 }
 
+#ifdef NEIL
+/*
+ * Drop foreign-data wrapper by OID
+ */
+#endif
 
 /*
  * Create a foreign server
@@ -1065,6 +1077,11 @@ AlterForeignServer(AlterForeignServerStmt *stmt)
 	return address;
 }
 
+#ifdef NEIL
+/*
+ * Drop foreign server by OID
+ */
+#endif
 
 /*
  * Common routine to check permission for user-mapping-related DDL
@@ -1395,6 +1412,11 @@ RemoveUserMapping(DropUserMappingStmt *stmt)
 	return umId;
 }
 
+#ifdef NEIL
+/*
+ * Drop user mapping by OID.  This is called to clean up dependencies.
+ */
+#endif
 
 /*
  * Create a foreign table

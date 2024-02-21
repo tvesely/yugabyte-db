@@ -14,6 +14,7 @@
 #define INSTRUMENT_H
 
 #include "portability/instr_time.h"
+#include "yb/yql/pggate/ybc_pg_typedefs.h"
 
 
 /*
@@ -63,6 +64,33 @@ typedef enum InstrumentOption
 	INSTRUMENT_ALL = PG_INT32_MAX
 } InstrumentOption;
 
+/*
+ * YugabyteDB RPC statistics
+ */
+typedef struct YbPgRpcStats {
+	double  count;			/* # of RPCs */
+	double	wait_time;		/* RPC wait time (ns) */
+} YbPgRpcStats;
+
+typedef struct YbPgEventMetric {
+	double sum;
+	double count;
+} YbPgEventMetric;
+
+typedef struct YbInstrumentation {
+	YbPgRpcStats         tbl_reads;
+	YbPgRpcStats         index_reads;
+	YbPgRpcStats         catalog_reads;
+	YbPgRpcStats         write_flushes;
+	double               tbl_writes;
+	double               index_writes;
+	double               catalog_writes;
+
+	double               storage_gauge_metrics[YB_STORAGE_GAUGE_COUNT];
+	double               storage_counter_metrics[YB_STORAGE_COUNTER_COUNT];
+	YbPgEventMetric      storage_event_metrics[YB_STORAGE_EVENT_COUNT];
+} YbInstrumentation;
+
 typedef struct Instrumentation
 {
 	/* Parameters set at node creation: */
@@ -88,6 +116,8 @@ typedef struct Instrumentation
 	double		nfiltered2;		/* # of tuples removed by "other" quals */
 	BufferUsage bufusage;		/* total buffer usage */
 	WalUsage	walusage;		/* total WAL usage */
+
+	YbInstrumentation yb_instr; /* YB specific instrumentation stats */
 } Instrumentation;
 
 typedef struct WorkerInstrumentation

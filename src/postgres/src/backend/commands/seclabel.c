@@ -92,6 +92,8 @@ SecLabelSupportsObjectType(ObjectType objtype)
 		case OBJECT_TSPARSER:
 		case OBJECT_TSTEMPLATE:
 		case OBJECT_USER_MAPPING:
+		case OBJECT_YBTABLEGROUP:
+		case OBJECT_YBPROFILE:
 			return false;
 
 			/*
@@ -370,7 +372,7 @@ SetSharedSecurityLabel(const ObjectAddress *object,
 	if (HeapTupleIsValid(oldtup))
 	{
 		if (label == NULL)
-			CatalogTupleDelete(pg_shseclabel, &oldtup->t_self);
+			CatalogTupleDelete(pg_shseclabel, oldtup);
 		else
 		{
 			replaces[Anum_pg_shseclabel_label - 1] = true;
@@ -457,7 +459,7 @@ SetSecurityLabel(const ObjectAddress *object,
 	if (HeapTupleIsValid(oldtup))
 	{
 		if (label == NULL)
-			CatalogTupleDelete(pg_seclabel, &oldtup->t_self);
+			CatalogTupleDelete(pg_seclabel, oldtup);
 		else
 		{
 			replaces[Anum_pg_seclabel_label - 1] = true;
@@ -509,7 +511,7 @@ DeleteSharedSecurityLabel(Oid objectId, Oid classId)
 	scan = systable_beginscan(pg_shseclabel, SharedSecLabelObjectIndexId, true,
 							  NULL, 2, skey);
 	while (HeapTupleIsValid(oldtup = systable_getnext(scan)))
-		CatalogTupleDelete(pg_shseclabel, &oldtup->t_self);
+		CatalogTupleDelete(pg_shseclabel, oldtup);
 	systable_endscan(scan);
 
 	table_close(pg_shseclabel, RowExclusiveLock);
@@ -560,7 +562,7 @@ DeleteSecurityLabel(const ObjectAddress *object)
 	scan = systable_beginscan(pg_seclabel, SecLabelObjectIndexId, true,
 							  NULL, nkeys, skey);
 	while (HeapTupleIsValid(oldtup = systable_getnext(scan)))
-		CatalogTupleDelete(pg_seclabel, &oldtup->t_self);
+		CatalogTupleDelete(pg_seclabel, oldtup);
 	systable_endscan(scan);
 
 	table_close(pg_seclabel, RowExclusiveLock);

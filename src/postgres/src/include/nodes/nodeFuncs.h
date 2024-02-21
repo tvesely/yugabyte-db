@@ -32,6 +32,7 @@
 /* callback function for check_functions_in_node */
 typedef bool (*check_function_callback) (Oid func_id, void *context);
 
+typedef bool (*pull_varattnos_walker_ptr)(void*, void*, AttrNumber);
 
 extern Oid	exprType(const Node *expr);
 extern int32 exprTypmod(const Node *expr);
@@ -158,5 +159,8 @@ extern bool raw_expression_tree_walker(Node *node, bool (*walker) (),
 struct PlanState;
 extern bool planstate_tree_walker(struct PlanState *planstate, bool (*walker) (),
 								  void *context);
+
+/* YB additions. */
+extern List **YbPlanStateTryGetAggrefs(struct PlanState *planstate);
 
 #endif							/* NODEFUNCS_H */

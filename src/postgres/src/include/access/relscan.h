@@ -21,6 +21,13 @@
 #include "storage/spin.h"
 #include "utils/relcache.h"
 
+/* Yugabyte includes */
+#include "access/yb_sys_scan_base.h"
+#include "executor/ybcExpr.h"
+#include "pg_yb_utils.h"
+#include "yb/yql/pggate/ybc_pggate.h"
+
+typedef struct YbScanDescData *YbScanDesc;
 
 struct ParallelTableScanDescData;
 
@@ -144,6 +151,12 @@ typedef struct IndexScanDescData
 	HeapTuple	xs_hitup;		/* index data returned by AM, as HeapTuple */
 	struct TupleDescData *xs_hitupdesc; /* rowtype descriptor of xs_hitup */
 
+	/*
+	 * Result from Yugabyte.
+	 * - Note that Postgres keeps the result in field "ItemPointerData xs_heaptid;".
+	 * - This field now also contains the returned value from Yugabyte including ybctid.
+	 * - It is called "YbItemPointerData yb_itemptr;"
+	 */
 	ItemPointerData xs_heaptid; /* result */
 	bool		xs_heap_continue;	/* T if must keep walking, potential
 									 * further results */
@@ -164,6 +177,40 @@ typedef struct IndexScanDescData
 
 	/* parallel index scan information, in shared memory */
 	struct ParallelIndexScanDescData *parallel_scan;
+
+	/* During execution, Postgres will push down hints to YugaByte for performance purpose.
+	 * (currently, only LIMIT values are being pushed down). All these execution information will
+	 * kept in "yb_exec_params".
+	 *
+	 * - Generally, "yb_exec_params" is kept in execution-state. As Postgres executor traverses and
+	 *   excutes the nodes, it passes along the execution state. Necessary information (such as
+	 *   LIMIT values) will be collected and written to "yb_exec_params" in EState.
+	 *
+	 * - However, IndexScan execution doesn't use Postgres's node execution infrastructure. Neither
+	 *   execution plan nor execution state is passed to IndexScan operators. As a result,
+	 *   "yb_exec_params" is kept in "IndexScanDescData" to avoid passing EState to a lot of
+	 *   IndexScan functions.
+	 *
+	 * - Postgres IndexScan function will call and pass "yb_exec_params" to PgGate to control the
+	 *   index-scan execution in YugaByte.
+	 */
+	YBCPgExecParameters *yb_exec_params;
+
+	/*
+	 * yb_scan_plan stores postgres scan plan for current index scan.
+	 * This information is used to determine target columns that must be read from DocDB
+	 * and columns which can be omitted.
+	 * TODO: Calculate set of required YB targets on plan stage and use it here
+	 *       instead of scan plan. In addition to code speedup this approach will allow to
+	 *       remove scan plan from IndexScanDescData structure. Native postgres code doesn't
+	 *       have plan information in scan state structures.
+	 */
+	Scan *yb_scan_plan;
+	PushdownExprs *yb_rel_pushdown;
+	PushdownExprs *yb_idx_pushdown;
+	List *yb_aggrefs;				/* aggregate information for aggregate pushdown */
+	TupleTableSlot *yb_agg_slot;	/* scan slot used by aggregate pushdown */
+	int yb_distinct_prefixlen; /* prefix length, in columns, of a distinct index scan */
 }			IndexScanDescData;
 
 /* Generic structure for parallel scans */
@@ -181,11 +228,12 @@ struct TupleTableSlot;
 typedef struct SysScanDescData
 {
 	Relation	heap_rel;		/* catalog being scanned */
-	Relation	irel;			/* NULL if doing heap scan */
+	Relation	irel;			/* NULL if doing heap or yb scan */
 	struct TableScanDescData *scan; /* only valid in storage-scan case */
 	struct IndexScanDescData *iscan;	/* only valid in index-scan case */
 	struct SnapshotData *snapshot;	/* snapshot to unregister at end of scan */
 	struct TupleTableSlot *slot;
+	YbSysScanBase	ybscan;			/* only valid in yb-scan case */
 }			SysScanDescData;
 
 #endif							/* RELSCAN_H */

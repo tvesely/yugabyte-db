@@ -41,6 +41,7 @@
 #include "utils/lsyscache.h"
 #include "utils/rangetypes.h"
 #include "utils/timestamp.h"
+#include "funcapi.h"
 
 
 /* fn_extra cache entry for one of the range I/O functions */
@@ -120,6 +121,7 @@ Datum
 range_out(PG_FUNCTION_ARGS)
 {
 	RangeType  *range = PG_GETARG_RANGE_P(0);
+	DatumDecodeOptions *decode_options = NULL;
 	char	   *output_str;
 	RangeIOData *cache;
 	char		flags;
@@ -131,17 +133,71 @@ range_out(PG_FUNCTION_ARGS)
 
 	check_stack_depth();		/* recurses when subtype is a range type */
 
-	cache = get_range_io_data(fcinfo, RangeTypeGetOid(range), IOFunc_output);
+	if (PG_NARGS() == 2)
+	{
+		decode_options = (DatumDecodeOptions *)PG_GETARG_POINTER(1);
+		TypeCacheEntry elemtype;
+		TypeCacheEntry typcache;
 
-	/* deserialize */
-	range_deserialize(cache->typcache, range, &lower, &upper, &empty);
+		typcache.type_id = decode_options->range_type;
+		elemtype.typlen = decode_options->elem_len;
+		elemtype.typbyval = decode_options->elem_by_val;
+		elemtype.typalign = decode_options->elem_align;
+		typcache.rngelemtype = &elemtype;
+
+		/* deserialize */
+		range_deserialize(&typcache, range, &lower, &upper, &empty);
+	}
+	else
+	{
+		cache = get_range_io_data(fcinfo, RangeTypeGetOid(range), IOFunc_output);
+
+		/* deserialize */
+		range_deserialize(cache->typcache, range, &lower, &upper, &empty);
+	}
 	flags = range_get_flags(range);
 
-	/* call element type's output function */
-	if (RANGE_HAS_LBOUND(flags))
-		lbound_str = OutputFunctionCall(&cache->typioproc, lower.val);
-	if (RANGE_HAS_UBOUND(flags))
-		ubound_str = OutputFunctionCall(&cache->typioproc, upper.val);
+	if (decode_options != NULL && decode_options->from_YB)
+	{
+		if (RANGE_HAS_LBOUND(flags))
+		{
+			if (decode_options->option == 't')
+			{
+				DatumDecodeOptions tz_datum_decodeOptions;
+				tz_datum_decodeOptions.timezone = decode_options->timezone;
+				tz_datum_decodeOptions.from_YB = decode_options->from_YB;
+				lbound_str = DatumGetCString(FunctionCall2(decode_options->elem_finfo, lower.val,
+							PointerGetDatum(&tz_datum_decodeOptions)));
+			}
+			else
+			{
+				lbound_str = OutputFunctionCall(decode_options->elem_finfo, lower.val);
+			}
+		}
+		if (RANGE_HAS_UBOUND(flags))
+		{
+			if (decode_options->option == 't')
+			{
+				DatumDecodeOptions tz_datum_decodeOptions;
+				tz_datum_decodeOptions.timezone = decode_options->timezone;
+				tz_datum_decodeOptions.from_YB = decode_options->from_YB;
+				ubound_str = DatumGetCString(FunctionCall2(decode_options->elem_finfo, upper.val,
+							PointerGetDatum(&tz_datum_decodeOptions)));
+			}
+			else
+			{
+				ubound_str = OutputFunctionCall(decode_options->elem_finfo, upper.val);
+			}
+		}
+	}
+	else
+	{
+		/* call element type's output function */
+		if (RANGE_HAS_LBOUND(flags))
+			lbound_str = OutputFunctionCall(&cache->typioproc, lower.val);
+		if (RANGE_HAS_UBOUND(flags))
+			ubound_str = OutputFunctionCall(&cache->typioproc, upper.val);
+	}
 
 	/* construct result string */
 	output_str = range_deparse(flags, lbound_str, ubound_str);
@@ -265,24 +321,12 @@ range_send(PG_FUNCTION_ARGS)
 
 	if (RANGE_HAS_LBOUND(flags))
 	{
-		Datum		bound = PointerGetDatum(SendFunctionCall(&cache->typioproc,
-															 lower.val));
-		uint32		bound_len = VARSIZE(bound) - VARHDRSZ;
-		char	   *bound_data = VARDATA(bound);
-
-		pq_sendint32(buf, bound_len);
-		pq_sendbytes(buf, bound_data, bound_len);
+		StringInfoSendFunctionCall(buf, &cache->typioproc, lower.val);
 	}
 
 	if (RANGE_HAS_UBOUND(flags))
 	{
-		Datum		bound = PointerGetDatum(SendFunctionCall(&cache->typioproc,
-															 upper.val));
-		uint32		bound_len = VARSIZE(bound) - VARHDRSZ;
-		char	   *bound_data = VARDATA(bound);
-
-		pq_sendint32(buf, bound_len);
-		pq_sendbytes(buf, bound_data, bound_len);
+		StringInfoSendFunctionCall(buf, &cache->typioproc, upper.val);
 	}
 
 	PG_RETURN_BYTEA_P(pq_endtypsend(buf));

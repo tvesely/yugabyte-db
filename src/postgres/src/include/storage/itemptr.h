@@ -16,6 +16,7 @@
 
 #include "storage/block.h"
 #include "storage/off.h"
+#include "ybgate/yb_itemptr.h"
 
 /*
  * ItemPointer:
@@ -37,6 +38,9 @@ typedef struct ItemPointerData
 {
 	BlockIdData ip_blkid;
 	OffsetNumber ip_posid;
+
+	/* In Yugabyte DB, a data location is represented by ybctid and not a disk location */
+	YbItemPointerData yb_item;
 }
 
 /* If compiler understands packed and aligned pragmas, use those */
@@ -80,7 +84,8 @@ typedef ItemPointerData *ItemPointer;
  *		True iff the disk item pointer is not NULL.
  */
 #define ItemPointerIsValid(pointer) \
-	((bool) (PointerIsValid(pointer) && ((pointer)->ip_posid != 0)))
+	((bool) (PointerIsValid(pointer) && \
+			 ((pointer)->ip_posid != 0 || (pointer)->yb_item.ybctid != 0)))
 
 /*
  * ItemPointerGetBlockNumberNoCheck
@@ -123,12 +128,14 @@ typedef ItemPointerData *ItemPointer;
 /*
  * ItemPointerSet
  *		Sets a disk item pointer to the specified block and offset.
+ *      For Yugabyte, initialize yb_item to 0 here. It's then set to a valid value when being used.
  */
 #define ItemPointerSet(pointer, blockNumber, offNum) \
 ( \
 	AssertMacro(PointerIsValid(pointer)), \
 	BlockIdSet(&((pointer)->ip_blkid), blockNumber), \
-	(pointer)->ip_posid = offNum \
+	(pointer)->ip_posid = offNum, \
+	YbItemPointerSetInvalid(pointer) \
 )
 
 /*
@@ -163,7 +170,8 @@ typedef ItemPointerData *ItemPointer;
 	AssertMacro(PointerIsValid(toPointer)), \
 	AssertMacro(PointerIsValid(fromPointer)), \
 	*(toPointer) = *(fromPointer) \
-)
+);\
+COPY_YBITEM((fromPointer)->yb_item, (toPointer)->yb_item)
 
 /*
  * ItemPointerSetInvalid
@@ -173,7 +181,8 @@ typedef ItemPointerData *ItemPointer;
 ( \
 	AssertMacro(PointerIsValid(pointer)), \
 	BlockIdSet(&((pointer)->ip_blkid), InvalidBlockNumber), \
-	(pointer)->ip_posid = InvalidOffsetNumber \
+	(pointer)->ip_posid = InvalidOffsetNumber,				\
+	YbItemPointerSetInvalid(pointer)						\
 )
 
 /*

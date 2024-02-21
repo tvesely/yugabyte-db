@@ -31,6 +31,8 @@
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 
+#include "pg_yb_utils.h"
+
 
 static void does_not_exist_skipping(ObjectType objtype,
 									Node *object);
@@ -58,6 +60,9 @@ RemoveObjects(DropStmt *stmt)
 {
 	ObjectAddresses *objects;
 	ListCell   *cell1;
+	bool is_yb_db_admin_droppable_object =
+		stmt->removeType == OBJECT_FUNCTION
+		&& IsYbDbAdminUser(GetUserId());
 
 	objects = new_object_addresses();
 
@@ -105,7 +110,8 @@ RemoveObjects(DropStmt *stmt)
 		/* Check permissions. */
 		namespaceId = get_object_namespace(&address);
 		if (!OidIsValid(namespaceId) ||
-			!pg_namespace_ownercheck(namespaceId, GetUserId()))
+			(!pg_namespace_ownercheck(namespaceId, GetUserId()) &&
+			 !is_yb_db_admin_droppable_object))
 			check_object_ownership(GetUserId(), stmt->removeType, address,
 								   object, relation);
 
@@ -447,6 +453,14 @@ does_not_exist_skipping(ObjectType objtype, Node *object)
 			break;
 		case OBJECT_FDW:
 			msg = gettext_noop("foreign-data wrapper \"%s\" does not exist, skipping");
+			name = strVal(object);
+			break;
+		case OBJECT_YBTABLEGROUP:
+			msg = gettext_noop("tablegroup \"%s\" does not exist, skipping");
+			name = strVal(object);
+			break;
+		case OBJECT_YBPROFILE:
+			msg = gettext_noop("profile \"%s\" does not exist, skipping");
 			name = strVal(object);
 			break;
 		case OBJECT_FOREIGN_SERVER:

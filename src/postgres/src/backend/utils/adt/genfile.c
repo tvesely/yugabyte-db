@@ -37,6 +37,8 @@
 #include "utils/syscache.h"
 #include "utils/timestamp.h"
 
+/* YB includes. */
+#include "pg_yb_utils.h"
 
 /*
  * Convert a "text" filename argument to C string, and check it's allowable.
@@ -54,6 +56,8 @@ static char *
 convert_and_check_filename(text *arg)
 {
 	char	   *filename;
+
+	YBCheckServerAccessIsAllowed();
 
 	filename = text_to_cstring(arg);
 	canonicalize_path(filename);	/* filename can change length here */
@@ -548,6 +552,8 @@ pg_ls_dir_files(FunctionCallInfo fcinfo, const char *dir, bool missing_ok)
 	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
 	DIR		   *dirdesc;
 	struct dirent *de;
+
+	YBCheckServerAccessIsAllowed();
 
 	InitMaterializedSRF(fcinfo, 0);
 

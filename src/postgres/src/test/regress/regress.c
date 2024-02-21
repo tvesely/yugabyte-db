@@ -1257,3 +1257,30 @@ get_columns_length(PG_FUNCTION_ARGS)
 
 	PG_RETURN_INT32(column_offset);
 }
+
+/*
+ * Input and output functions for large, fixed-length name type.
+ */
+PG_FUNCTION_INFO_V1(bigname_in);
+Datum
+bigname_in(PG_FUNCTION_ARGS)
+{
+	char		*input_string = PG_GETARG_CSTRING(0);
+	char		*result = (char *) palloc0(128 * sizeof(char));
+
+	strncpy(result, input_string, 127 * sizeof(char));
+
+	PG_RETURN_POINTER(result);
+}
+
+PG_FUNCTION_INFO_V1(bigname_out);
+Datum
+bigname_out(PG_FUNCTION_ARGS)
+{
+	char		*internal_string = (char *) PG_GETARG_POINTER(0);
+	char		*result = (char *) palloc(128);
+
+	strncpy(result, internal_string, 128);
+
+	PG_RETURN_CSTRING(result);
+}

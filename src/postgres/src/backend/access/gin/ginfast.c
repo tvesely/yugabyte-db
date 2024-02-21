@@ -856,7 +856,7 @@ ginInsertCleanup(GinState *ginstate, bool full_clean,
 	/*
 	 * Initialize.  All temporary space will be in opCtx
 	 */
-	opCtx = AllocSetContextCreate(CurrentMemoryContext,
+	opCtx = AllocSetContextCreate(GetCurrentMemoryContext(),
 								  "GIN insert cleanup temporary context",
 								  ALLOCSET_DEFAULT_SIZES);
 

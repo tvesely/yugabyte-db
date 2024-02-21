@@ -66,6 +66,8 @@
 #include "utils/snapmgr.h"
 #include "utils/varlena.h"
 
+#include "pg_yb_utils.h"
+
 
 /* Globally visible state variables */
 bool		creating_extension = false;
@@ -749,7 +751,7 @@ execute_sql_string(const char *sql)
 		 * limit the memory used when there are many commands in the string.
 		 */
 		per_parsetree_context =
-			AllocSetContextCreate(CurrentMemoryContext,
+			AllocSetContextCreate(GetCurrentMemoryContext(),
 								  "execute_sql_string per-statement context",
 								  ALLOCSET_DEFAULT_SIZES);
 		oldcontext = MemoryContextSwitchTo(per_parsetree_context);
@@ -863,7 +865,7 @@ execute_extension_script(Oid extensionOid, ExtensionControlFile *control,
 	 * here so that the control flags are correctly associated with the right
 	 * script(s) if they happen to be set in secondary control files.
 	 */
-	if (control->superuser && !superuser())
+	if (!IsYbExtensionUser(GetUserId()) && control->superuser && !superuser())
 	{
 		if (extension_is_trusted(control))
 			switch_to_superuser = true;
@@ -874,7 +876,8 @@ execute_extension_script(Oid extensionOid, ExtensionControlFile *control,
 							control->name),
 					 control->trusted
 					 ? errhint("Must have CREATE privilege on current database to create this extension.")
-					 : errhint("Must be superuser to create this extension.")));
+					 : errhint("Must be superuser or a member of the "
+							   "yb_extension role to create this extension.")));
 		else
 			ereport(ERROR,
 					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -882,7 +885,8 @@ execute_extension_script(Oid extensionOid, ExtensionControlFile *control,
 							control->name),
 					 control->trusted
 					 ? errhint("Must have CREATE privilege on current database to update this extension.")
-					 : errhint("Must be superuser to update this extension.")));
+					 : errhint("Must be superuser or a member of the "
+							   "yb_extension role to create this extension.")));
 	}
 
 	filename = get_extension_script_filename(control, from_version, version);
@@ -922,6 +926,15 @@ execute_extension_script(Oid extensionOid, ExtensionControlFile *control,
 									 PGC_SUSET, PGC_S_SESSION,
 									 BOOTSTRAP_SUPERUSERID,
 									 GUC_ACTION_SAVE, true, 0, false);
+
+	/*
+	 * Similarly disable check_function_bodies, to ensure that SQL functions
+	 * won't be parsed during creation.
+	 */
+	if (check_function_bodies)
+		(void) set_config_option("check_function_bodies", "off",
+								 PGC_USERSET, PGC_S_SESSION,
+								 GUC_ACTION_SAVE, true, 0, false);
 
 	/*
 	 * Similarly disable check_function_bodies, to ensure that SQL functions
@@ -973,6 +986,16 @@ execute_extension_script(Oid extensionOid, ExtensionControlFile *control,
 		char	   *c_sql = read_extension_script_file(control, filename);
 		Datum		t_sql;
 
+		/*
+		 * We filter each substitution through quote_identifier().  When the
+		 * arg contains one of the following characters, no one collection of
+		 * quoting can work inside $$dollar-quoted string literals$$,
+		 * 'single-quoted string literals', and outside of any literal.  To
+		 * avoid a security snare for extension authors, error on substitution
+		 * for arguments containing these.
+		 */
+		const char *quoting_relevant_chars = "\"$'\\";
+
 		/* We use various functions that want to operate on text datums */
 		t_sql = CStringGetTextDatum(c_sql);
 
@@ -1013,6 +1036,7 @@ execute_extension_script(Oid extensionOid, ExtensionControlFile *control,
 		 */
 		if (!control->relocatable)
 		{
+			Datum		old = t_sql;
 			const char *qSchemaName = quote_identifier(schemaName);
 
 			t_sql = DirectFunctionCall3Coll(replace_text,
@@ -1020,6 +1044,11 @@ execute_extension_script(Oid extensionOid, ExtensionControlFile *control,
 											t_sql,
 											CStringGetTextDatum("@extschema@"),
 											CStringGetTextDatum(qSchemaName));
+			if (t_sql != old && strpbrk(schemaName, quoting_relevant_chars))
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+						 errmsg("invalid character in extension \"%s\" schema: must not contain any of \"%s\"",
+								control->name, quoting_relevant_chars)));
 		}
 
 		/*
@@ -1916,7 +1945,7 @@ RemoveExtensionById(Oid extId)
 
 	/* We assume that there can be at most one matching tuple */
 	if (HeapTupleIsValid(tuple))
-		CatalogTupleDelete(rel, &tuple->t_self);
+		CatalogTupleDelete(rel, tuple);
 
 	systable_endscan(scandesc);
 

@@ -196,7 +196,7 @@ void
 RelationBuildRowSecurity(Relation relation)
 {
 	MemoryContext rscxt;
-	MemoryContext oldcxt = CurrentMemoryContext;
+	MemoryContext oldcxt = GetCurrentMemoryContext();
 	RowSecurityDesc *rsdesc;
 	Relation	catalog;
 	ScanKeyData skey;
@@ -209,7 +209,7 @@ RelationBuildRowSecurity(Relation relation)
 	 * a relcache flush.  However, to cover the possibility of an error
 	 * partway through, we don't make the context long-lived till we're done.
 	 */
-	rscxt = AllocSetContextCreate(CurrentMemoryContext,
+	rscxt = AllocSetContextCreate(GetCurrentMemoryContext(),
 								  "row security descriptor",
 								  ALLOCSET_SMALL_SIZES);
 	MemoryContextCopyAndSetIdentifier(rscxt,
@@ -382,7 +382,7 @@ RemovePolicyById(Oid policy_id)
 				 errmsg("permission denied: \"%s\" is a system catalog",
 						RelationGetRelationName(rel))));
 
-	CatalogTupleDelete(pg_policy_rel, &tuple->t_self);
+	CatalogTupleDelete(pg_policy_rel, tuple);
 
 	systable_endscan(sscan);
 

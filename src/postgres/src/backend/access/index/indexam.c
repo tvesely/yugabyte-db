@@ -34,6 +34,8 @@
  *		index_getprocid - get a support procedure OID
  *		index_getprocinfo - get a support procedure's lookup info
  *
+ *		yb_index_might_recheck - could the scan possibly recheck indexquals?
+ *
  * NOTES
  *		This file contains the index_ routines which used
  *		to be a scattered collection of stuff in access/genam.
@@ -63,6 +65,9 @@
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 
+/* Yugabyte includes */
+#include "pg_yb_utils.h"
+#include "access/yb_scan.h"
 
 /* ----------------------------------------------------------------
  *					macros used in index_ routines
@@ -96,6 +101,16 @@ do { \
 		elog(ERROR, "function \"%s\" is not defined for index \"%s\"", \
 			 CppAsString(pname), RelationGetRelationName(indexRelation)); \
 } while(0)
+
+#ifdef NEIL
+#define CHECK_REL_PROCEDURE2(pname1, pname2) \
+do { \
+	if (indexRelation->rd_indam->pname1 == NULL && \
+	    indexRelation->rd_indam->pname2 == NULL) \
+		elog(ERROR, "functions %s/%s are not defined for index %s", \
+			 CppAsString(pname1), CppAsString(pname2), RelationGetRelationName(indexRelation)); \
+} while(0)
+#endif
 
 #define CHECK_SCAN_PROCEDURE(pname) \
 do { \
@@ -180,20 +195,62 @@ index_insert(Relation indexRelation,
 			 Relation heapRelation,
 			 IndexUniqueCheck checkUnique,
 			 bool indexUnchanged,
-			 IndexInfo *indexInfo)
+			 IndexInfo *indexInfo,
+			 bool yb_shared_insert)
 {
 	RELATION_CHECKS;
-	CHECK_REL_PROCEDURE(aminsert);
+	if (IsYugaByteEnabled() && IsYBRelation(indexRelation))
+		CHECK_REL_PROCEDURE(yb_aminsert);
+	else
+		CHECK_REL_PROCEDURE(aminsert);
 
 	if (!(indexRelation->rd_indam->ampredlocks))
 		CheckForSerializableConflictIn(indexRelation,
 									   (ItemPointer) NULL,
 									   InvalidBlockNumber);
 
+	/*
+	 * For YugaByte-based index, call the variant of aminsert that takes the full tuple instead of
+	 * the tuple id.
+	 */
+	if (IsYugaByteEnabled() && IsYBRelation(indexRelation))
+	{
+		return indexRelation->rd_indam->yb_aminsert(indexRelation, values, isnull,
+													heap_t_ctid, heapRelation,
+													checkUnique, indexInfo,
+													yb_shared_insert);
+	}
+
 	return indexRelation->rd_indam->aminsert(indexRelation, values, isnull,
-											 heap_t_ctid, heapRelation,
-											 checkUnique, indexUnchanged,
-											 indexInfo);
+												heap_t_ctid, heapRelation,
+												checkUnique, indexUnchanged,
+												indexInfo);
+}
+
+/* ----------------
+ *		index_delete - delete an index tuple from a relation.
+ *      This is used only for indexes backed by YugabyteDB. For Postgres, when a tuple is updated,
+ *      the ctid of the original tuple will be invalid (except for heap-only tuple (HOT)). Because
+ *      of this, index entries of the original tuple do not need to be deleted in UPDATE. For
+ *      YugaByte-based tables, the ybctid is the primary key of the tuple and will remain valid
+ *      after UPDATE. So when a tuple is updated, we need to delete all index entries associated
+ *      explicitly.
+ * ----------------
+ */
+void
+yb_index_delete(Relation indexRelation,
+				Datum *values,
+				bool *isnull,
+				Datum ybctid,
+				Relation heapRelation,
+				IndexInfo *indexInfo)
+{
+	RELATION_CHECKS;
+	CHECK_REL_PROCEDURE(yb_amdelete);
+
+	indexRelation->rd_indam->yb_amdelete(indexRelation, values, isnull,
+										 ybctid, heapRelation,
+										 indexInfo);
 }
 
 /*
@@ -545,7 +602,12 @@ index_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 
 		return NULL;
 	}
-	Assert(ItemPointerIsValid(&scan->xs_heaptid));
+	/*
+	 * YB should not set TID (neither t_self nor t_ybctid).  Update this code
+	 * after merging with master D31232.
+	 */
+	Assert(IsYBRelation(scan->indexRelation) ||
+		   ItemPointerIsValid(&scan->xs_heaptid));
 
 	pgstat_count_index_tuples(scan->indexRelation, 1);
 
@@ -574,6 +636,18 @@ index_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 bool
 index_fetch_heap(IndexScanDesc scan, TupleTableSlot *slot)
 {
+	if (IsYBRelation(scan->heapRelation))
+	{
+		/*
+		 * For aggregate pushdown, slot should have already been updated by YB
+		 * amgettuple.
+		 */
+		if (!scan->yb_aggrefs)
+			ExecStoreHeapTuple(scan->xs_hitup, slot, false /* shouldFree */);
+
+		return true;
+	}
+
 	bool		all_dead = false;
 	bool		found;
 
@@ -628,15 +702,24 @@ index_getnext_slot(IndexScanDesc scan, ScanDirection direction, TupleTableSlot *
 			if (tid == NULL)
 				break;
 
-			Assert(ItemPointerEquals(tid, &scan->xs_heaptid));
+			/*
+			 * YB should not set TID (neither t_self nor t_ybctid).  Update
+			 * this code after merging with master D31232.
+			 */
+			Assert(IsYBRelation(scan->indexRelation) ||
+				   ItemPointerEquals(tid, &scan->xs_heaptid));
 		}
 
 		/*
 		 * Fetch the next (or only) visible heap tuple for this index entry.
 		 * If we don't find anything, loop around and grab the next TID from
 		 * the index.
+		 *
+		 * YB should not set TID (neither t_self nor t_ybctid).  Update this
+		 * code after merging with master D31232.
 		 */
-		Assert(ItemPointerIsValid(&scan->xs_heaptid));
+		Assert(IsYBRelation(scan->indexRelation) ||
+			   ItemPointerIsValid(&scan->xs_heaptid));
 		if (index_fetch_heap(scan, slot))
 			return true;
 	}
@@ -981,4 +1064,17 @@ index_opclass_options(Relation indrel, AttrNumber attnum, Datum attoptions,
 	(void) FunctionCall1(procinfo, PointerGetDatum(&relopts));
 
 	return build_local_reloptions(&relopts, attoptions, validate);
+}
+
+bool
+yb_index_might_recheck(Relation heapRelation, Relation indexRelation,
+					   bool xs_want_itup, ScanKey keys, int nkeys)
+{
+	RELATION_CHECKS;
+	CHECK_REL_PROCEDURE(yb_ammightrecheck);
+
+	return indexRelation->rd_indam->yb_ammightrecheck(heapRelation,
+													  indexRelation,
+													  xs_want_itup, keys,
+													  nkeys);
 }

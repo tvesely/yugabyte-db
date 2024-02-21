@@ -59,6 +59,9 @@
 #include "utils/syscache.h"
 #include "utils/varlena.h"
 
+/* YB includes */
+#include "pg_yb_utils.h"
+
 
 /*
  * The namespace search path is a possibly-empty list of namespace OIDs.
@@ -3399,8 +3402,8 @@ SetTempNamespaceState(Oid tempNamespaceId, Oid tempToastNamespaceId)
  * used by PushOverrideSearchPath.
  *
  * The result structure is allocated in the specified memory context
- * (which might or might not be equal to CurrentMemoryContext); but any
- * junk created by revalidation calculations will be in CurrentMemoryContext.
+ * (which might or might not be equal to GetCurrentMemoryContext()); but any
+ * junk created by revalidation calculations will be in GetCurrentMemoryContext().
  */
 OverrideSearchPath *
 GetOverrideSearchPath(MemoryContext context)
@@ -3437,7 +3440,7 @@ GetOverrideSearchPath(MemoryContext context)
 /*
  * CopyOverrideSearchPath - copy the specified OverrideSearchPath.
  *
- * The result structure is allocated in CurrentMemoryContext.
+ * The result structure is allocated in GetCurrentMemoryContext().
  */
 OverrideSearchPath *
 CopyOverrideSearchPath(OverrideSearchPath *path)
@@ -3517,6 +3520,10 @@ OverrideSearchPathMatchesCurrent(OverrideSearchPath *path)
 
 /*
  * PushOverrideSearchPath - temporarily override the search path
+ *
+ * Do not use this function; almost any usage introduces a security
+ * vulnerability.  It exists for the benefit of legacy code running in
+ * non-security-sensitive environments.
  *
  * We allow nested overrides, hence the push/pop terminology.  The GUC
  * search_path variable is ignored while an override is active.
@@ -4275,11 +4282,15 @@ RemoveTempRelations(Oid tempNamespaceId)
 	object.objectId = tempNamespaceId;
 	object.objectSubId = 0;
 
+	if (IsYugaByteEnabled())
+		YBIncrementDdlNestingLevel(YB_DDL_MODE_SILENT);
 	performDeletion(&object, DROP_CASCADE,
 					PERFORM_DELETION_INTERNAL |
 					PERFORM_DELETION_QUIETLY |
 					PERFORM_DELETION_SKIP_ORIGINAL |
 					PERFORM_DELETION_SKIP_EXTENSIONS);
+	if (IsYugaByteEnabled())
+		YBDecrementDdlNestingLevel();
 }
 
 /*

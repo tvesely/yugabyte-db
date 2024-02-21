@@ -23,6 +23,7 @@
 
 #include "access/tableam.h"
 #include "access/xact.h"
+#include "access/yb_scan.h"
 #include "executor/executor.h"
 #include "executor/nodeLockRows.h"
 #include "foreign/fdwapi.h"
@@ -57,6 +58,33 @@ ExecLockRows(PlanState *pstate)
 	 */
 lnext:
 	slot = ExecProcNode(outerPlan);
+
+	int n_yb_relations = 0;
+	int n_relations = 0;
+	foreach(lc, node->lr_arowMarks)
+	{
+		ExecAuxRowMark *aerm = (ExecAuxRowMark *) lfirst(lc);
+		ExecRowMark *erm = aerm->rowmark;
+		if (IsYBBackedRelation(erm->relation))
+		{
+			n_yb_relations++;
+		}
+		n_relations++;
+	}
+
+	if (n_yb_relations > 0 && n_yb_relations != n_relations)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("Mixing Yugabyte relations and not Yugabyte relations with "
+						"row locks is not supported")));
+
+	if (n_yb_relations > 0 && XactIsoLevel == XACT_SERIALIZABLE) {
+		/*
+		 * For YB relations, we don't lock tuples using this node in SERIALIZABLE level. Instead we take
+		 * predicate locks by setting the row mark in read requests sent to txn participants.
+		 */
+		return slot;
+	}
 
 	if (TupIsNull(slot))
 	{
@@ -183,11 +211,17 @@ lnext:
 		if (!IsolationUsesXactSnapshot())
 			lockflags |= TUPLE_LOCK_FLAG_FIND_LAST_VERSION;
 
-		test = table_tuple_lock(erm->relation, &tid, estate->es_snapshot,
-								markSlot, estate->es_output_cid,
-								lockmode, erm->waitPolicy,
-								lockflags,
-								&tmfd);
+		if (IsYBBackedRelation(erm->relation)) {
+			test = YBCLockTuple(erm->relation, datum, erm->markType, erm->waitPolicy,
+													estate);
+		}
+		else {
+			test = table_tuple_lock(erm->relation, &tid, estate->es_snapshot,
+									markSlot, estate->es_output_cid,
+									lockmode, erm->waitPolicy,
+									lockflags,
+									&tmfd);
+		}
 
 		switch (test)
 		{
@@ -217,12 +251,45 @@ lnext:
 				/*
 				 * Got the lock successfully, the locked tuple saved in
 				 * markSlot for, if needed, EvalPlanQual testing below.
+				 *
+				 * TODO(Piyush): If we use EvalPlanQual for READ
+				 * COMMITTED in future:
+				 * - remove !IsYBBackedRelation(erm->relation)
+				 * - In YBCLockTuple():
+				 *	- initialize tmfd.traversed to false
+				 *	- if the tuple being locked is updated, populate latest
+				 *    tuple version in markSlot and set tmfd.traversed to true
 				 */
-				if (tmfd.traversed)
+				if (!IsYBBackedRelation(erm->relation) && tmfd.traversed)
 					epq_needed = true;
 				break;
 
 			case TM_Updated:
+				/*
+				 * TODO(Piyush): If handling using EvalPlanQual for READ
+				 * COMMITTED in future, replace
+				 * IsYBBackedRelation(erm->relation) with
+				 * IsolationUsesXactSnapshot().
+				 */
+				if (IsYBBackedRelation(erm->relation))
+				{
+					if (erm->waitPolicy == LockWaitError)
+					{
+						// In case the user has specified NOWAIT, the intention is to error out immediately. If
+						// we raise TransactionErrorCode::kConflict, the statement might be retried by our
+						// retry logic in yb_attempt_to_restart_on_error().
+						ereport(ERROR,
+							(errcode(ERRCODE_LOCK_NOT_AVAILABLE),
+							 errmsg("could not obtain lock on row in relation \"%s\"",
+											RelationGetRelationName(erm->relation))));
+					}
+
+					ereport(ERROR,
+							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+							errmsg("could not serialize access due to concurrent update"),
+							yb_txn_errcode(YBCGetTxnConflictErrorCode())));
+				}
+
 				if (IsolationUsesXactSnapshot())
 					ereport(ERROR,
 							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
@@ -248,8 +315,11 @@ lnext:
 					 test);
 		}
 
-		/* Remember locked tuple's TID for EPQ testing and WHERE CURRENT OF */
-		erm->curCtid = tid;
+		if (!IsYBBackedRelation(erm->relation))
+		{
+			/* Remember locked tuple's TID for EPQ testing and WHERE CURRENT OF */
+			erm->curCtid = tid;
+		}
 	}
 
 	/*

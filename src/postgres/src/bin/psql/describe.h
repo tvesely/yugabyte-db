@@ -70,6 +70,9 @@ extern bool listTables(const char *tabtypes, const char *pattern, bool verbose, 
 /* \dP */
 extern bool listPartitionedTables(const char *reltypes, const char *pattern, bool verbose);
 
+/* \dgr (or \dgrt) */
+extern bool listTablegroups(const char *pattern, bool verbose, bool showRelations);
+
 /* \dD */
 extern bool listDomains(const char *pattern, bool verbose, bool showSystem);
 

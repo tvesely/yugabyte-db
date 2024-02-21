@@ -14,12 +14,14 @@
 #ifndef PLANNODES_H
 #define PLANNODES_H
 
+#include "access/relation.h"
 #include "access/sdir.h"
 #include "access/stratnum.h"
 #include "lib/stringinfo.h"
 #include "nodes/bitmapset.h"
 #include "nodes/lockoptions.h"
 #include "nodes/parsenodes.h"
+#include "nodes/pathnodes.h"
 #include "nodes/primnodes.h"
 
 
@@ -89,6 +91,14 @@ typedef struct PlannedStmt
 	/* statement location in source string (copied from Query) */
 	int			stmt_location;	/* start location, or -1 if unknown */
 	int			stmt_len;		/* length in bytes; 0 means "rest of string" */
+
+	/* YB specific fields */
+
+	/*
+	 * Number of relations that are still referenced by the plan after
+	 * constraint exclusion and partition pruning.
+	 */
+	int		yb_num_referenced_relations;
 } PlannedStmt;
 
 /* macro for fetching the Plan associated with a SubPlan node */
@@ -240,6 +250,14 @@ typedef struct ModifyTable
 	List	   *exclRelTlist;	/* tlist of the EXCLUDED pseudo relation */
 	List	   *mergeActionLists;	/* per-target-table lists of actions for
 									 * MERGE */
+
+	List	   *ybPushdownTlist;	/* tlist for the pushdown SET expressions */
+	List	   *ybReturningColumns;	/* columns to fetch from DocDB */
+	List	   *ybColumnRefs;	/* colrefs to evaluate pushdown expressions */
+	bool		no_row_trigger; /* planner has checked no triggers apply */
+	List	   *no_update_index_list; /* OIDs of indexes to be aren't updated */
+	bool 		ybUseScanTupleInUpdate; /* use old scan tuple in UPDATE to construct the new tuple */
+	bool		ybHasWholeRowAttribute; /* whether subplan tlist contains wholerow junk attribute */
 } ModifyTable;
 
 struct PartitionPruneInfo;		/* forward reference to struct below */
@@ -357,6 +375,25 @@ typedef struct SeqScan
 } SeqScan;
 
 /* ----------------
+ *		YB table sequential scan node
+ * ----------------
+ */
+
+typedef struct PushdownExprs
+{
+	List *quals;
+	List *colrefs;
+} PushdownExprs;
+
+typedef struct YbSeqScan
+{
+	Scan		scan;
+	PushdownExprs yb_pushdown;
+	double		yb_estimated_num_nexts;
+	double		yb_estimated_num_seeks;
+} YbSeqScan;
+
+/* ----------------
  *		table sample scan node
  * ----------------
  */
@@ -413,7 +450,14 @@ typedef struct IndexScan
 	List	   *indexorderby;	/* list of index ORDER BY exprs */
 	List	   *indexorderbyorig;	/* the same in original form */
 	List	   *indexorderbyops;	/* OIDs of sort ops for ORDER BY exprs */
+	List	   *indextlist;		/* TargetEntry list describing index's cols */
 	ScanDirection indexorderdir;	/* forward or backward or don't care */
+	PushdownExprs yb_idx_pushdown;
+	PushdownExprs yb_rel_pushdown;
+	double		yb_estimated_num_nexts;
+	double		yb_estimated_num_seeks;
+	int         yb_distinct_prefixlen; /* distinct index scan prefix */
+	YbLockMechanism	yb_lock_mechanism;	/* locks possible as part of the scan */
 } IndexScan;
 
 /* ----------------
@@ -456,6 +500,16 @@ typedef struct IndexOnlyScan
 	List	   *indexorderby;	/* list of index ORDER BY exprs */
 	List	   *indextlist;		/* TargetEntry list describing index's cols */
 	ScanDirection indexorderdir;	/* forward or backward or don't care */
+	PushdownExprs yb_pushdown;
+	/*
+	 * yb_indexqual_for_recheck is the modified version of indexqual.
+	 * It is used in tuple recheck step only.
+	 * In majority of cases it is NULL which means that indexqual will be used for tuple recheck.
+	 */
+	List	   *yb_indexqual_for_recheck;
+	double		yb_estimated_num_nexts;
+	double		yb_estimated_num_seeks;
+	int         yb_distinct_prefixlen; /* distinct index scan prefix */
 } IndexOnlyScan;
 
 /* ----------------
@@ -756,11 +810,39 @@ typedef struct NestLoop
 	List	   *nestParams;		/* list of NestLoopParam nodes */
 } NestLoop;
 
+/*
+ * Information to use for each hashable clause in a batched nested loop join.
+ * This is used by the hash batching strategy of BNL.
+ */
+typedef struct YbBNLHashClauseInfo
+{
+	Oid hashOp;				/* Operator to hash the outer side of this clause
+							   with. */
+	int innerHashAttNo;		/* Attno of inner side variable. */
+	Expr *outerParamExpr;	/* Outer expression of this clause. */
+} YbBNLHashClauseInfo;
+
+typedef struct YbBatchedNestLoop
+{
+	NestLoop nl;
+
+	/*
+	 * Only relevant if we're using the hash batching strategy.
+	 */
+
+	YbBNLHashClauseInfo *hashClauseInfos; /*
+										   * Array of information about each
+										   * hashable join clause.
+										   */
+	int num_hashClauseInfos;
+} YbBatchedNestLoop;
+
 typedef struct NestLoopParam
 {
 	NodeTag		type;
 	int			paramno;		/* number of the PARAM_EXEC Param to set */
 	Var		   *paramval;		/* outer-relation Var to assign to Param */
+	int	   		yb_batch_size;	/* Batch size of this param. */
 } NestLoopParam;
 
 /* ----------------
@@ -1312,6 +1394,11 @@ typedef struct PartitionPruneStepCombine
 	List	   *source_stepids;
 } PartitionPruneStepCombine;
 
+typedef struct PartitionPruneStepFuncOp
+{
+	PartitionPruneStep step;
+	List       *exprs;
+} PartitionPruneStepFuncOp;
 
 /*
  * Plan invalidation info

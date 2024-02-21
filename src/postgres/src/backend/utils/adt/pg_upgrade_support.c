@@ -23,7 +23,7 @@
 
 #define CHECK_IS_BINARY_UPGRADE									\
 do {															\
-	if (!IsBinaryUpgrade)										\
+	if (!IsBinaryUpgrade && !yb_binary_restore)					\
 		ereport(ERROR,											\
 				(errcode(ERRCODE_CANT_CHANGE_RUNTIME_PARAM),	\
 				 errmsg("function can only be called when server is in binary upgrade mode"))); \
@@ -260,6 +260,17 @@ binary_upgrade_set_missing_value(PG_FUNCTION_ARGS)
 
 	CHECK_IS_BINARY_UPGRADE;
 	SetAttrMissing(table_id, cattname, cvalue);
+
+	PG_RETURN_VOID();
+}
+
+Datum
+binary_upgrade_set_next_tablegroup_oid(PG_FUNCTION_ARGS)
+{
+	Oid			tablegroup_oid = PG_GETARG_OID(0);
+
+	CHECK_IS_BINARY_UPGRADE;
+	binary_upgrade_next_tablegroup_oid = tablegroup_oid;
 
 	PG_RETURN_VOID();
 }

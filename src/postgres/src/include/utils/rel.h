@@ -28,6 +28,8 @@
 #include "utils/relcache.h"
 #include "utils/reltrigger.h"
 
+/* YB includes. */
+#include "yb/yql/pggate/ybc_pg_typedefs.h"
 
 /*
  * LockRelId and LockInfo really belong to lmgr.h, but it's more convenient
@@ -248,6 +250,8 @@ typedef struct RelationData
 	bool		pgstat_enabled; /* should relation stats be counted */
 	/* use "struct" here to avoid needing to include pgstat.h: */
 	struct PgStat_TableStatus *pgstat_info; /* statistics collection area */
+
+	YbTableProperties yb_table_properties; /* NULL if not loaded */
 } RelationData;
 
 
@@ -326,6 +330,13 @@ typedef struct StdRdOptions
 	int			parallel_workers;	/* max number of parallel workers */
 	StdRdOptIndexCleanup vacuum_index_cleanup;	/* controls index vacuuming */
 	bool		vacuum_truncate;	/* enables vacuum to truncate a relation */
+
+	/* YB additions. */
+	bool		colocated;
+	Oid 		tablegroup_oid;
+	Oid 		colocation_id;
+	Oid 		table_oid;
+	Oid 		row_type_oid;
 } StdRdOptions;
 
 #define HEAP_MIN_FILLFACTOR			10
@@ -390,6 +401,25 @@ typedef enum ViewOptCheckOption
 } ViewOptCheckOption;
 
 /*
+ * RelationGetColocated
+ *		Returns the relation's colocated reloption setting.
+ *		Note multiple eval of argument!
+ */
+#define RelationGetColocated(relation) \
+	((relation)->rd_options ? \
+	 ((StdRdOptions *) (relation)->rd_options)->colocated : false)
+
+/*
+ * RelationGetTableOid
+ *		Returns the relation's table_oid reloption setting.
+ *		Note multiple eval of argument!
+ */
+#define RelationGetTableOid(relation) \
+	((relation)->rd_options ? \
+	 ((StdRdOptions *) (relation)->rd_options)->table_oid : 0)
+
+
+/*
  * ViewOptions
  *		Contents of rd_options for views
  */
@@ -399,6 +429,8 @@ typedef struct ViewOptions
 	bool		security_barrier;
 	bool		security_invoker;
 	ViewOptCheckOption check_option;
+
+	bool		yb_use_initdb_acl;	/* initialize with default initdb-like permissions */
 } ViewOptions;
 
 /*
@@ -693,5 +725,15 @@ RelationGetSmgr(Relation rel)
 /* routines in utils/cache/relcache.c */
 extern void RelationIncrementReferenceCount(Relation rel);
 extern void RelationDecrementReferenceCount(Relation rel);
+
+/*
+ * YbParitionedTableOptions
+ *		Contents of rd_options for partitioned tables.
+ */
+typedef struct YbParitionedTableOptions
+{
+	int32		vl_len_;		/* varlena header (do not touch directly!) */
+	Oid 		colocation_id;
+} YbParitionedTableOptions;
 
 #endif							/* REL_H */

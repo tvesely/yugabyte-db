@@ -177,7 +177,7 @@ ExecMakeTableFunctionResult(SetExprState *setexpr,
 								 setexpr->fcinfo->fncollation,
 								 NULL, (Node *) &rsinfo);
 		/* evaluate the function's argument list */
-		Assert(CurrentMemoryContext == argContext);
+		Assert(GetCurrentMemoryContext() == argContext);
 		ExecEvalFuncArgs(fcinfo, setexpr->args, econtext);
 
 		/*

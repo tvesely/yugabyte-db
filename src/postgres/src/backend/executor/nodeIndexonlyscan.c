@@ -44,10 +44,14 @@
 #include "utils/memutils.h"
 #include "utils/rel.h"
 
+/* Yugabyte includes */
+#include "pg_yb_utils.h"
+#include "access/yb_scan.h"
 
 static TupleTableSlot *IndexOnlyNext(IndexOnlyScanState *node);
 static void StoreIndexTuple(TupleTableSlot *slot, IndexTuple itup,
 							TupleDesc itupdesc);
+static void yb_init_indexonly_scandesc(IndexOnlyScanState *node);
 
 
 /* ----------------------------------------------------------------
@@ -79,12 +83,33 @@ IndexOnlyNext(IndexOnlyScanState *node)
 		else if (ScanDirectionIsBackward(direction))
 			direction = ForwardScanDirection;
 	}
+	/* "Don't care about order" direction. */
+	if (IsYugaByteEnabled() &&
+		ScanDirectionIsNoMovement(((IndexOnlyScan *) node->ss.ps.plan)->indexorderdir))
+	{
+		direction = NoMovementScanDirection;
+	}
 	scandesc = node->ioss_ScanDesc;
 	econtext = node->ss.ps.ps_ExprContext;
 	slot = node->ss.ss_ScanTupleSlot;
 
 	if (scandesc == NULL)
 	{
+		if (IsYugaByteEnabled() && node->yb_ioss_aggrefs)
+		{
+			/*
+			 * For aggregate pushdown, we only read aggregate results from
+			 * DocDB and pass that up to the aggregate node (agg pushdown
+			 * wouldn't be enabled if we needed to read other expressions). Set
+			 * up a dummy scan slot to hold as many attributes as there are
+			 * pushed aggregates.
+			 */
+			TupleDesc tupdesc =	CreateTemplateTupleDesc(list_length(node->yb_ioss_aggrefs));
+			ExecInitScanTupleSlot(estate, &node->ss, tupdesc, &TTSOpsVirtual);
+			/* Refresh the local pointer. */
+			slot = node->ss.ss_ScanTupleSlot;
+		}
+
 		/*
 		 * We reach here if the index only scan is not parallel, or if we're
 		 * serially executing an index only scan that was planned to be
@@ -102,6 +127,7 @@ IndexOnlyNext(IndexOnlyScanState *node)
 		/* Set it up for index-only scan */
 		node->ioss_ScanDesc->xs_want_itup = true;
 		node->ioss_VMBuffer = InvalidBuffer;
+		yb_init_indexonly_scandesc(node);
 
 		/*
 		 * If no run-time keys to calculate or they are ready, go ahead and
@@ -115,9 +141,33 @@ IndexOnlyNext(IndexOnlyScanState *node)
 						 node->ioss_NumOrderByKeys);
 	}
 
+	if (IsYugaByteEnabled())
+	{
+		/*
+		 * Set up LIMIT and future execution parameter before calling Yugabyte
+		 * scanning rountines.
+		 */
+		scandesc->yb_exec_params = &estate->yb_exec_params;
+		/* TODO(hector) Add row marks for INDEX_ONLY_SCAN. */
+		scandesc->yb_exec_params->rowmark = -1;
+
+		/*
+		 * Set reference to slot in scan desc so that YB amgettuple can use it
+		 * during aggregate pushdown.
+		 */
+		scandesc->yb_agg_slot = slot;
+	}
+
 	/*
 	 * OK, now that we have what we need, fetch the next tuple.
 	 */
+	MemoryContext oldcontext;
+	/*
+	 * To handle dead tuple for temp table, we shouldn't store its index
+	 * in per-tuple memory context.
+	 */
+	if (IsYBRelation(node->ss.ss_currentRelation))
+		oldcontext = MemoryContextSwitchTo(node->ss.ps.ps_ExprContext->ecxt_per_tuple_memory);
 	while ((tid = index_getnext_tid(scandesc, direction)) != NULL)
 	{
 		bool		tuple_from_heap = false;
@@ -157,8 +207,11 @@ IndexOnlyNext(IndexOnlyScanState *node)
 		 *
 		 * It's worth going through this complexity to avoid needing to lock
 		 * the VM buffer, which could cause significant contention.
+		 *
+		 * YugaByte index tuple is always visible.
 		 */
-		if (!VM_ALL_VISIBLE(scandesc->heapRelation,
+		if (!IsYBRelation(node->ss.ss_currentRelation) &&
+			!VM_ALL_VISIBLE(scandesc->heapRelation,
 							ItemPointerGetBlockNumber(tid),
 							&node->ioss_VMBuffer))
 		{
@@ -209,6 +262,16 @@ IndexOnlyNext(IndexOnlyScanState *node)
 		}
 		else if (scandesc->xs_itup)
 			StoreIndexTuple(slot, scandesc->xs_itup, scandesc->xs_itupdesc);
+		else if (IsYugaByteEnabled() && scandesc->yb_aggrefs)
+		{
+			/*
+			 * Slot should have already been updated by YB amgettuple.
+			 *
+			 * Also, index only aggregate pushdown cannot support recheck, and
+			 * this should have been prevented by earlier logic.
+			 */
+			Assert(!scandesc->xs_recheck);
+		}
 		else
 			elog(ERROR, "no data returned for index-only scan");
 
@@ -218,9 +281,16 @@ IndexOnlyNext(IndexOnlyScanState *node)
 		if (scandesc->xs_recheck)
 		{
 			econtext->ecxt_scantuple = slot;
-			if (!ExecQualAndReset(node->recheckqual, econtext))
+			ExprState *recheckqual = node->yb_indexqual_for_recheck
+				? node->yb_indexqual_for_recheck : node->recheckqual;
+			/*
+			 * Don't reset per-tuple memory context in YB, as the scanned tuple
+			 * resides there.
+			 */
+			if (!ExecQual(recheckqual, econtext))
 			{
 				/* Fails recheck, so drop it and loop back for another */
+				ResetExprContext(econtext);
 				InstrCountFiltered2(node, 1);
 				continue;
 			}
@@ -242,14 +312,19 @@ IndexOnlyNext(IndexOnlyScanState *node)
 		/*
 		 * If we didn't access the heap, then we'll need to take a predicate
 		 * lock explicitly, as if we had.  For now we do that at page level.
+		 *
+		 * YugaByte index tuple does not require locking.
 		 */
-		if (!tuple_from_heap)
+		if (!IsYugaByteEnabled() && !tuple_from_heap)
 			PredicateLockPage(scandesc->heapRelation,
 							  ItemPointerGetBlockNumber(tid),
 							  estate->es_snapshot);
-
+		if (IsYBRelation(node->ss.ss_currentRelation))
+			MemoryContextSwitchTo(oldcontext);
 		return slot;
 	}
+	if (IsYBRelation(node->ss.ss_currentRelation))
+		MemoryContextSwitchTo(oldcontext);
 
 	/*
 	 * if we get here it means the index scan failed so we are at the end of
@@ -351,9 +426,12 @@ ExecReScanIndexOnlyScan(IndexOnlyScanState *node)
 
 	/* reset index scan */
 	if (node->ioss_ScanDesc)
+	{
+		yb_init_indexonly_scandesc(node);
 		index_rescan(node->ioss_ScanDesc,
 					 node->ioss_ScanKeys, node->ioss_NumScanKeys,
 					 node->ioss_OrderByKeys, node->ioss_NumOrderByKeys);
+	}
 
 	ExecScanReScan(&node->ss);
 }
@@ -555,14 +633,25 @@ ExecInitIndexOnlyScan(IndexOnlyScan *node, EState *estate, int eflags)
 		ExecInitQual(node->scan.plan.qual, (PlanState *) indexstate);
 	indexstate->recheckqual =
 		ExecInitQual(node->recheckqual, (PlanState *) indexstate);
+	indexstate->yb_indexqual_for_recheck = node->yb_indexqual_for_recheck
+		? ExecInitQual(node->yb_indexqual_for_recheck, (PlanState *) indexstate)
+		: NULL;
 
 	/*
 	 * If we are just doing EXPLAIN (ie, aren't going to run the plan), stop
 	 * here.  This allows an index-advisor plugin to EXPLAIN a plan containing
 	 * references to nonexistent indexes.
+	 *
+	 * YB note: For aggregate pushdown, we need recheck knowledge to determine
+	 * whether aggregates can be pushed down or not.  At the time of writing,
+	 * - aggregate pushdown only supports YB relations
+	 * - there cannot be a mix of non-YB tables and YB indexes, and vice versa
+	 * Use those assumptions to avoid the perf hit on EXPLAIN non-YB relations.
 	 */
 	if (eflags & EXEC_FLAG_EXPLAIN_ONLY)
-		return indexstate;
+		if (!(IsYBRelation(currentRelation) &&
+			  (eflags & EXEC_FLAG_YB_AGG_PARENT)))
+			return indexstate;
 
 	/* Open the index relation. */
 	lockmode = exec_rt_fetch(node->scan.scanrelid, estate)->rellockmode;
@@ -588,6 +677,27 @@ ExecInitIndexOnlyScan(IndexOnlyScan *node, EState *estate, int eflags)
 						   &indexstate->ioss_NumRuntimeKeys,
 						   NULL,	/* no ArrayKeys */
 						   NULL);
+
+	/*
+	 * For aggregate pushdown purposes, using the scan keys, determine ahead of
+	 * beginning the scan whether indexqual recheck might happen, and pass that
+	 * information up to the aggregate node.  Only attempt this for YB
+	 * relations since pushdown is not supported otherwise.
+	 */
+	if (IsYBRelation(indexstate->ioss_RelationDesc) &&
+		(eflags & EXEC_FLAG_YB_AGG_PARENT))
+	{
+		indexstate->yb_ioss_might_recheck =
+			yb_index_might_recheck(currentRelation,
+								   indexstate->ioss_RelationDesc,
+								   true /* xs_want_itup */,
+								   indexstate->ioss_ScanKeys,
+								   indexstate->ioss_NumScanKeys);
+
+		/* Got the info for aggregate pushdown.  EXPLAIN can return now. */
+		if  (eflags & EXEC_FLAG_EXPLAIN_ONLY)
+			return indexstate;
+	}
 
 	/*
 	 * any ORDER BY exprs have to be turned into scankeys in the same way
@@ -626,6 +736,28 @@ ExecInitIndexOnlyScan(IndexOnlyScan *node, EState *estate, int eflags)
 	 * all done.
 	 */
 	return indexstate;
+}
+
+/*
+ * yb_init_indexonly_scandesc
+ *
+ *		Initialize Yugabyte specific fields of the IndexScanDesc.
+ */
+static void
+yb_init_indexonly_scandesc(IndexOnlyScanState *node)
+{
+	if (IsYugaByteEnabled())
+	{
+		IndexScanDesc scandesc = node->ioss_ScanDesc;
+		EState *estate = node->ss.ps.state;
+		IndexOnlyScan *plan = (IndexOnlyScan *) node->ss.ps.plan;
+		scandesc->yb_exec_params = &estate->yb_exec_params;
+		scandesc->yb_scan_plan = (Scan *) plan;
+		scandesc->yb_rel_pushdown =
+			YbInstantiatePushdownParams(&plan->yb_pushdown, estate);
+		scandesc->yb_aggrefs = node->yb_ioss_aggrefs;
+		scandesc->yb_distinct_prefixlen = plan->yb_distinct_prefixlen;
+	}
 }
 
 /* ----------------------------------------------------------------
@@ -679,6 +811,7 @@ ExecIndexOnlyScanInitializeDSM(IndexOnlyScanState *node,
 								 piscan);
 	node->ioss_ScanDesc->xs_want_itup = true;
 	node->ioss_VMBuffer = InvalidBuffer;
+	yb_init_indexonly_scandesc(node);
 
 	/*
 	 * If no run-time keys to calculate or they are ready, go ahead and pass
@@ -723,6 +856,7 @@ ExecIndexOnlyScanInitializeWorker(IndexOnlyScanState *node,
 								 node->ioss_NumOrderByKeys,
 								 piscan);
 	node->ioss_ScanDesc->xs_want_itup = true;
+	yb_init_indexonly_scandesc(node);
 
 	/*
 	 * If no run-time keys to calculate or they are ready, go ahead and pass

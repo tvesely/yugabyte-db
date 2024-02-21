@@ -848,10 +848,14 @@ NextCopyFromRawFields(CopyFromState cstate, char ***fields, int *nfields)
  *
  * 'values' and 'nulls' arrays must be the same length as columns of the
  * relation passed to BeginCopyFrom. This function fills the arrays.
+ *
+ * 'skip_row' is used to specify whether we should skip format checking for
+ * this row. In particular, if 'skip_row' is true, we will not raise error
+ * upon reading an invalid row.
  */
 bool
 NextCopyFrom(CopyFromState cstate, ExprContext *econtext,
-			 Datum *values, bool *nulls)
+			 Datum *values, bool *nulls, bool skip_row)
 {
 	TupleDesc	tupDesc;
 	AttrNumber	num_phys_attrs,
@@ -868,8 +872,11 @@ NextCopyFrom(CopyFromState cstate, ExprContext *econtext,
 	attr_count = list_length(cstate->attnumlist);
 
 	/* Initialize all values for row to NULL */
-	MemSet(values, 0, num_phys_attrs * sizeof(Datum));
-	MemSet(nulls, true, num_phys_attrs * sizeof(bool));
+	if (!skip_row)
+	{
+		MemSet(values, 0, num_phys_attrs * sizeof(Datum));
+		MemSet(nulls, true, num_phys_attrs * sizeof(bool));
+	}
 
 	if (!cstate->opts.binary)
 	{
@@ -882,6 +889,10 @@ NextCopyFrom(CopyFromState cstate, ExprContext *econtext,
 		/* read raw fields in the next line */
 		if (!NextCopyFromRawFields(cstate, &field_strings, &fldct))
 			return false;
+
+		/* if the row is skipped, ignore all the format checking */
+		if (skip_row)
+			return true;
 
 		/* check for overflowing fields */
 		if (attr_count > 0 && fldct > attr_count)
@@ -1017,7 +1028,7 @@ NextCopyFrom(CopyFromState cstate, ExprContext *econtext,
 		 * per-tuple memory context in it.
 		 */
 		Assert(econtext != NULL);
-		Assert(CurrentMemoryContext == econtext->ecxt_per_tuple_memory);
+		Assert(GetCurrentMemoryContext() == econtext->ecxt_per_tuple_memory);
 
 		values[defmap[i]] = ExecEvalExpr(defexprs[i], econtext,
 										 &nulls[defmap[i]]);

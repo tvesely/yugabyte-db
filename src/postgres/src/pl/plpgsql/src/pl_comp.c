@@ -35,6 +35,8 @@
 #include "utils/syscache.h"
 #include "utils/typcache.h"
 
+#include "pg_yb_utils.h"
+
 /* ----------
  * Our own local and global variables
  * ----------
@@ -171,8 +173,9 @@ recheck:
 	if (function)
 	{
 		/* We have a compiled function, but is it still valid? */
-		if (function->fn_xmin == HeapTupleHeaderGetRawXmin(procTup->t_data) &&
-			ItemPointerEquals(&function->fn_tid, &procTup->t_self))
+		if (IsYugaByteEnabled() ? function->yb_catalog_version == YBGetActiveCatalogCacheVersion() :
+				(function->fn_xmin == HeapTupleHeaderGetRawXmin(procTup->t_data) &&
+				ItemPointerEquals(&function->fn_tid, &procTup->t_self)))
 			function_valid = true;
 		else
 		{
@@ -244,7 +247,7 @@ recheck:
  * The passed-in "function" pointer is either NULL or an already-allocated
  * function struct to overwrite.
  *
- * While compiling a function, the CurrentMemoryContext is the
+ * While compiling a function, the GetCurrentMemoryContext() is the
  * per-function memory context of the function we are compiling. That
  * means a palloc() will allocate storage with the same lifetime as
  * the function itself.
@@ -370,6 +373,7 @@ do_compile(FunctionCallInfo fcinfo,
 
 	function->nstatements = 0;
 	function->requires_procedure_resowner = false;
+	function->yb_catalog_version = YBGetActiveCatalogCacheVersion();
 
 	/*
 	 * Initialize the compiler, particularly the namespace stack.  The
@@ -882,7 +886,7 @@ plpgsql_compile_inline(char *proc_source)
 	 * All the rest of the compile-time storage (e.g. parse tree) is kept in
 	 * its own memory context, so it can be reclaimed easily.
 	 */
-	func_cxt = AllocSetContextCreate(CurrentMemoryContext,
+	func_cxt = AllocSetContextCreate(GetCurrentMemoryContext(),
 									 "PL/pgSQL inline code context",
 									 ALLOCSET_DEFAULT_SIZES);
 	plpgsql_compile_tmp_cxt = MemoryContextSwitchTo(func_cxt);
@@ -2428,6 +2432,7 @@ plpgsql_add_initdatums(int **varnos)
 					case PLPGSQL_DTYPE_VAR:
 					case PLPGSQL_DTYPE_REC:
 						(*varnos)[n++] = plpgsql_Datums[i]->dno;
+						switch_fallthrough();
 
 					default:
 						break;

@@ -14,6 +14,7 @@
  */
 #include "postgres.h"
 
+#include "access/sysattr.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
 #include "miscadmin.h"
@@ -64,6 +65,9 @@ exprType(const Node *expr)
 			break;
 		case T_WindowFunc:
 			type = ((const WindowFunc *) expr)->wintype;
+			break;
+		case T_YbBatchedExpr:
+			type = exprType((Node *)((const YbBatchedExpr *) expr)->orig_expr);
 			break;
 		case T_SubscriptingRef:
 			type = ((const SubscriptingRef *) expr)->refrestype;
@@ -1945,6 +1949,8 @@ expression_tree_walker(Node *node,
 		case T_CTESearchClause:
 			/* primitive node types with no expression subnodes */
 			break;
+		case T_YbBatchedExpr:
+			return walker(((YbBatchedExpr *) node)->orig_expr, context);
 		case T_WithCheckOption:
 			return walker(((WithCheckOption *) node)->qual, context);
 		case T_Aggref:
@@ -2282,6 +2288,14 @@ expression_tree_walker(Node *node,
 			break;
 		case T_PartitionPruneStepCombine:
 			/* no expression subnodes */
+			break;
+		case T_PartitionPruneStepFuncOp:
+			{
+				PartitionPruneStepFuncOp *fstep =
+					(PartitionPruneStepFuncOp *) node;
+				if (walker((Node *) fstep->exprs, context))
+					return true;
+			}
 			break;
 		case T_JoinExpr:
 			{
@@ -2694,6 +2708,15 @@ expression_tree_mutator(Node *node,
 		case T_SortGroupClause:
 		case T_CTESearchClause:
 			return (Node *) copyObject(node);
+		case T_YbBatchedExpr:
+			{
+				YbBatchedExpr *bexpr = (YbBatchedExpr *) node;
+				YbBatchedExpr *newnode;
+
+				FLATCOPY(newnode, bexpr, YbBatchedExpr);
+				MUTATE(newnode->orig_expr, bexpr->orig_expr, Expr *);
+				return (Node *) newnode;			
+			}
 		case T_WithCheckOption:
 			{
 				WithCheckOption *wco = (WithCheckOption *) node;
@@ -3221,6 +3244,17 @@ expression_tree_mutator(Node *node,
 		case T_PartitionPruneStepCombine:
 			/* no expression sub-nodes */
 			return (Node *) copyObject(node);
+		case T_PartitionPruneStepFuncOp:
+			{
+				PartitionPruneStepFuncOp *fstep =
+					(PartitionPruneStepFuncOp *) node;
+				PartitionPruneStepFuncOp *newnode;
+
+				FLATCOPY(newnode, fstep, PartitionPruneStepFuncOp);
+				MUTATE(newnode->exprs,fstep->exprs, List *);
+				return (Node *) newnode;
+			}
+			break;
 		case T_JoinExpr:
 			{
 				JoinExpr   *join = (JoinExpr *) node;
@@ -4200,4 +4234,26 @@ planstate_walk_members(PlanState **planstates, int nplans,
 	}
 
 	return false;
+}
+
+/*
+ * Given PlanState, return pointer to aggrefs field if it exists, NULL
+ * otherwise.
+ */
+List **
+YbPlanStateTryGetAggrefs(PlanState *ps)
+{
+	switch (nodeTag(ps))
+	{
+		case T_ForeignScanState:
+			return &castNode(ForeignScanState, ps)->yb_fdw_aggrefs;
+		case T_IndexOnlyScanState:
+			return &castNode(IndexOnlyScanState, ps)->yb_ioss_aggrefs;
+		case T_IndexScanState:
+			return &castNode(IndexScanState, ps)->yb_iss_aggrefs;
+		case T_YbSeqScanState:
+			return &castNode(YbSeqScanState, ps)->aggrefs;
+		default:
+			return NULL;
+	}
 }

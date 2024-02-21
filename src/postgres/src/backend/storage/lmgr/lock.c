@@ -50,6 +50,7 @@
 #include "utils/ps_status.h"
 #include "utils/resowner_private.h"
 
+#include "pg_yb_utils.h"
 
 /* This configuration variable is used to set the lock table size */
 int			max_locks_per_xact; /* set by guc.c */
@@ -642,6 +643,11 @@ LockHasWaiters(const LOCKTAG *locktag, LOCKMODE lockmode, bool sessionLock)
 	LWLock	   *partitionLock;
 	bool		hasWaiters = false;
 
+	if (!YBIsPgLockingEnabled()) {
+		/* Locking is handled separately by YugaByte. */
+		return false;
+	}
+
 	if (lockmethodid <= 0 || lockmethodid >= lengthof(LockMethods))
 		elog(ERROR, "unrecognized lock method: %d", lockmethodid);
 	lockMethodTable = LockMethods[lockmethodid];
@@ -749,6 +755,11 @@ LockAcquire(const LOCKTAG *locktag,
 			bool sessionLock,
 			bool dontWait)
 {
+	if (!YBIsPgLockingEnabled()) {
+		/* Locking is handled separately by YugaByte. */
+		return LOCKACQUIRE_OK;
+	}
+
 	return LockAcquireExtended(locktag, lockmode, sessionLock, dontWait,
 							   true, NULL);
 }
@@ -787,6 +798,11 @@ LockAcquireExtended(const LOCKTAG *locktag,
 	LWLock	   *partitionLock;
 	bool		found_conflict;
 	bool		log_lock = false;
+
+	if (!YBIsPgLockingEnabled()) {
+		/* Locking is handled separately by YugaByte. */
+		return LOCKACQUIRE_OK;
+	}
 
 	if (lockmethodid <= 0 || lockmethodid >= lengthof(LockMethods))
 		elog(ERROR, "unrecognized lock method: %d", lockmethodid);
@@ -1798,6 +1814,11 @@ GrantAwaitedLock(void)
 void
 MarkLockClear(LOCALLOCK *locallock)
 {
+	if (!YBIsPgLockingEnabled()) {
+		/* Locking is handled separately by YugaByte. */
+		return;
+	}
+
 	Assert(locallock->nLocks > 0);
 	locallock->lockCleared = true;
 }
@@ -1982,6 +2003,11 @@ LockRelease(const LOCKTAG *locktag, LOCKMODE lockmode, bool sessionLock)
 	PROCLOCK   *proclock;
 	LWLock	   *partitionLock;
 	bool		wakeupNeeded;
+
+	if (!YBIsPgLockingEnabled()) {
+		/* Locking is handled separately by YugaByte. */
+		return true;
+	}
 
 	if (lockmethodid <= 0 || lockmethodid >= lengthof(LockMethods))
 		elog(ERROR, "unrecognized lock method: %d", lockmethodid);
@@ -2188,6 +2214,11 @@ LockReleaseAll(LOCKMETHODID lockmethodid, bool allLocks)
 	PROCLOCK   *proclock;
 	int			partition;
 	bool		have_fast_path_lwlock = false;
+
+	if (!YBIsPgLockingEnabled()) {
+		/* Locking is handled separately by YugaByte. */
+		return;
+	}
 
 	if (lockmethodid <= 0 || lockmethodid >= lengthof(LockMethods))
 		elog(ERROR, "unrecognized lock method: %d", lockmethodid);
@@ -2456,6 +2487,11 @@ LockReleaseSession(LOCKMETHODID lockmethodid)
 	HASH_SEQ_STATUS status;
 	LOCALLOCK  *locallock;
 
+	if (!YBIsPgLockingEnabled()) {
+		/* Locking is handled separately by YugaByte. */
+		return;
+	}
+
 	if (lockmethodid <= 0 || lockmethodid >= lengthof(LockMethods))
 		elog(ERROR, "unrecognized lock method: %d", lockmethodid);
 
@@ -2483,6 +2519,11 @@ LockReleaseSession(LOCKMETHODID lockmethodid)
 void
 LockReleaseCurrentOwner(LOCALLOCK **locallocks, int nlocks)
 {
+	if (!YBIsPgLockingEnabled()) {
+		/* Locking is handled separately by YugaByte. */
+		return;
+	}
+
 	if (locallocks == NULL)
 	{
 		HASH_SEQ_STATUS status;
@@ -2578,6 +2619,12 @@ ReleaseLockIfHeld(LOCALLOCK *locallock, bool sessionLock)
 void
 LockReassignCurrentOwner(LOCALLOCK **locallocks, int nlocks)
 {
+
+	if (!YBIsPgLockingEnabled()) {
+		/* Locking is handled separately by YugaByte. */
+		return;
+	}
+
 	ResourceOwner parent = ResourceOwnerGetParent(CurrentResourceOwner);
 
 	Assert(parent != NULL);
@@ -2924,6 +2971,15 @@ GetLockConflicts(const LOCKTAG *locktag, LOCKMODE lockmode, int *countp)
 	LWLock	   *partitionLock;
 	int			count = 0;
 	int			fast_count = 0;
+
+	if (!YBIsPgLockingEnabled()) {
+		/* Locking is handled separately by YugaByte. */
+		vxids = (VirtualTransactionId *)
+			palloc0(sizeof(VirtualTransactionId));
+		vxids[0].backendId = InvalidBackendId;
+		vxids[0].localTransactionId = InvalidLocalTransactionId;
+		return vxids;
+	}
 
 	if (lockmethodid <= 0 || lockmethodid >= lengthof(LockMethods))
 		elog(ERROR, "unrecognized lock method: %d", lockmethodid);
@@ -3322,6 +3378,11 @@ AtPrepare_Locks(void)
 {
 	HASH_SEQ_STATUS status;
 	LOCALLOCK  *locallock;
+
+	if (!YBIsPgLockingEnabled()) {
+		/* Locking is handled separately by YugaByte. */
+		return;
+	}
 
 	/* First, verify there aren't locks of both xact and session level */
 	CheckForSessionAndXactLocks();
@@ -4475,6 +4536,10 @@ lock_twophase_postabort(TransactionId xid, uint16 info,
 void
 VirtualXactLockTableInsert(VirtualTransactionId vxid)
 {
+	if (!YBIsPgLockingEnabled()) {
+		/* Locking is handled separately by YugaByte. */
+		return;
+	}
 	Assert(VirtualTransactionIdIsValid(vxid));
 
 	LWLockAcquire(&MyProc->fpInfoLock, LW_EXCLUSIVE);
@@ -4500,6 +4565,11 @@ VirtualXactLockTableCleanup(void)
 {
 	bool		fastpath;
 	LocalTransactionId lxid;
+
+	if (!YBIsPgLockingEnabled()) {
+		/* Locking is handled separately by YugaByte. */
+		return;
+	}
 
 	Assert(MyProc->backendId != InvalidBackendId);
 
@@ -4601,6 +4671,11 @@ VirtualXactLock(VirtualTransactionId vxid, bool wait)
 	LOCKTAG		tag;
 	PGPROC	   *proc;
 	TransactionId xid = InvalidTransactionId;
+
+	if (!YBIsPgLockingEnabled()) {
+		/* Locking is handled separately by YugaByte. */
+		return false;
+	}
 
 	Assert(VirtualTransactionIdIsValid(vxid));
 
@@ -4715,6 +4790,11 @@ LockWaiterCount(const LOCKTAG *locktag)
 	uint32		hashcode;
 	LWLock	   *partitionLock;
 	int			waiters = 0;
+
+	if (!YBIsPgLockingEnabled()) {
+		/* Locking is handled separately by YugaByte. */
+		return 0;
+	}
 
 	if (lockmethodid <= 0 || lockmethodid >= lengthof(LockMethods))
 		elog(ERROR, "unrecognized lock method: %d", lockmethodid);

@@ -59,6 +59,8 @@
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 
+/* Yugabyte includes */
+#include "pg_yb_utils.h"
 
 /*
  * GUC parameters
@@ -303,6 +305,23 @@ vacuum(List *relations, VacuumParams *params,
 	const char *stmttype;
 	volatile bool in_outer_xact,
 				use_own_xacts;
+
+	/*
+	 * VACUUM currently not supported for Yugabyte.
+	 */
+	if (params->options & VACOPT_VACUUM)
+	{
+		ereport(WARNING,
+				(errmsg("VACUUM will be ignored")));
+		if (params->options & VACOPT_ANALYZE)
+		{
+			params->options &= ~VACOPT_VACUUM;
+		}
+		else
+		{
+			return;
+		}
+	}
 
 	Assert(params != NULL);
 
@@ -1444,7 +1463,7 @@ vac_update_relstats(Relation relation,
 
 	/* If anything changed, write out the tuple. */
 	if (dirty)
-		heap_inplace_update(rd, ctup);
+		heap_inplace_update(rd, ctup, false /* yb_shared_update */);
 
 	table_close(rd, RowExclusiveLock);
 
@@ -1662,7 +1681,7 @@ vac_update_datfrozenxid(void)
 		newMinMulti = dbform->datminmxid;
 
 	if (dirty)
-		heap_inplace_update(relation, tuple);
+		heap_inplace_update(relation, tuple, false /* yb_shared_update */);
 
 	heap_freetuple(tuple);
 	table_close(relation, RowExclusiveLock);

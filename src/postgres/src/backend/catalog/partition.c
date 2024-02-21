@@ -32,6 +32,8 @@
 #include "utils/rel.h"
 #include "utils/syscache.h"
 
+#include "pg_yb_utils.h"
+
 static Oid	get_partition_parent_worker(Relation inhRel, Oid relid,
 										bool *detach_pending);
 static void get_partition_ancestors_worker(Relation inhRel, Oid relid,
@@ -227,7 +229,9 @@ map_partition_varattnos(List *expr, int fromrel_varno,
 		bool		found_whole_row;
 
 		part_attmap = build_attrmap_by_name(RelationGetDescr(to_rel),
-											RelationGetDescr(from_rel));
+											RelationGetDescr(from_rel),
+											false /* yb_ignore_type_mismatch */);
+
 		expr = (List *) map_variable_attnos((Node *) expr,
 											fromrel_varno, 0,
 											part_attmap,
@@ -272,8 +276,8 @@ has_partition_attrs(Relation rel, Bitmapset *attnums, bool *used_in_expr)
 
 		if (partattno != 0)
 		{
-			if (bms_is_member(partattno - FirstLowInvalidHeapAttributeNumber,
-							  attnums))
+			if (bms_is_member(partattno - YBGetFirstLowInvalidAttributeNumber(rel),
+			                  attnums))
 			{
 				if (used_in_expr)
 					*used_in_expr = false;
@@ -287,7 +291,11 @@ has_partition_attrs(Relation rel, Bitmapset *attnums, bool *used_in_expr)
 			Bitmapset  *expr_attrs = NULL;
 
 			/* Find all attributes referenced */
-			pull_varattnos(expr, 1, &expr_attrs);
+			/* pull_varattnos_min_attr offsets attributes by min_attr - 1. Therefore pass
+			 * YBGetFirstLowInvalidAttributeNumber + 1.
+			 */
+			pull_varattnos_min_attr(expr, 1, &expr_attrs,
+			                        YBGetFirstLowInvalidAttributeNumber(rel) + 1);
 			partexprs_item = lnext(partexprs, partexprs_item);
 
 			if (bms_overlap(attnums, expr_attrs))

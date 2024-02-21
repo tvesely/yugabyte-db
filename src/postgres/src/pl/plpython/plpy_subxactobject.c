@@ -100,7 +100,7 @@ PLy_subtransaction_enter(PyObject *self, PyObject *unused)
 	}
 
 	subxact->started = true;
-	oldcontext = CurrentMemoryContext;
+	oldcontext = GetCurrentMemoryContext();
 
 	subxactdata = (PLySubtransactionData *)
 		MemoryContextAlloc(TopTransactionContext,

@@ -66,6 +66,8 @@
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 
+#include "pg_yb_utils.h"
+
 #define UINT32_ACCESS_ONCE(var)		 ((uint32)(*((volatile uint32 *)&(var))))
 
 /* Our shared memory area */
@@ -585,27 +587,32 @@ ProcArrayRemove(PGPROC *proc, TransactionId latestXid)
 	Assert(myoff >= 0 && myoff < arrayP->numProcs);
 	Assert(ProcGlobal->allProcs[arrayP->pgprocnos[myoff]].pgxactoff == myoff);
 
-	if (TransactionIdIsValid(latestXid))
-	{
-		Assert(TransactionIdIsValid(ProcGlobal->xids[myoff]));
+	/*
+	 * Postgres transaction related code-paths are disabled for YB.
+	 */
+	if (!IsYugaByteEnabled()) {
+		if (TransactionIdIsValid(latestXid))
+		{
+			Assert(TransactionIdIsValid(ProcGlobal->xids[myoff]));
 
-		/* Advance global latestCompletedXid while holding the lock */
-		MaintainLatestCompletedXid(latestXid);
+			/* Advance global latestCompletedXid while holding the lock */
+			MaintainLatestCompletedXid(latestXid);
 
-		/* Same with xactCompletionCount  */
-		ShmemVariableCache->xactCompletionCount++;
+			/* Same with xactCompletionCount  */
+			ShmemVariableCache->xactCompletionCount++;
 
-		ProcGlobal->xids[myoff] = InvalidTransactionId;
-		ProcGlobal->subxidStates[myoff].overflowed = false;
-		ProcGlobal->subxidStates[myoff].count = 0;
-	}
-	else
-	{
-		/* Shouldn't be trying to remove a live transaction here */
+			ProcGlobal->xids[myoff] = InvalidTransactionId;
+			ProcGlobal->subxidStates[myoff].overflowed = false;
+			ProcGlobal->subxidStates[myoff].count = 0;
+		}
+		else
+		{
+			/* Shouldn't be trying to remove a live transaction here */
+			Assert(!TransactionIdIsValid(ProcGlobal->xids[myoff]));
+		}
 		Assert(!TransactionIdIsValid(ProcGlobal->xids[myoff]));
 	}
 
-	Assert(!TransactionIdIsValid(ProcGlobal->xids[myoff]));
 	Assert(ProcGlobal->subxidStates[myoff].count == 0);
 	Assert(ProcGlobal->subxidStates[myoff].overflowed == false);
 
@@ -649,8 +656,9 @@ ProcArrayRemove(PGPROC *proc, TransactionId latestXid)
 	 */
 	LWLockRelease(XidGenLock);
 	LWLockRelease(ProcArrayLock);
-}
 
+	elog(WARNING, "failed to find process with pid %d in ProcArray", proc->pid);
+}
 
 /*
  * ProcArrayEndTransaction -- mark a transaction as no longer running
@@ -678,6 +686,8 @@ ProcArrayEndTransaction(PGPROC *proc, TransactionId latestXid)
 		 */
 		Assert(TransactionIdIsValid(proc->xid));
 
+		if (!IsCurrentTxnWithPGRel())
+			return;
 		/*
 		 * If we can immediately acquire ProcArrayLock, we clear our own XID
 		 * and release the lock.  If not, use group XID clearing to improve
@@ -688,8 +698,7 @@ ProcArrayEndTransaction(PGPROC *proc, TransactionId latestXid)
 			ProcArrayEndTransactionInternal(proc, latestXid);
 			LWLockRelease(ProcArrayLock);
 		}
-		else
-			ProcArrayGroupClearXid(proc, latestXid);
+		else ProcArrayGroupClearXid(proc, latestXid);
 	}
 	else
 	{
@@ -909,6 +918,10 @@ ProcArrayClearTransaction(PGPROC *proc)
 {
 	int			pgxactoff;
 
+	if (IsYugaByteEnabled()) {
+		return;
+	}
+
 	/*
 	 * Currently we need to lock ProcArrayLock exclusively here, as we
 	 * increment xactCompletionCount below. We also need it at least in shared
@@ -1026,6 +1039,10 @@ ProcArrayInitRecovery(TransactionId initializedUptoXID)
 	Assert(standbyState == STANDBY_INITIALIZED);
 	Assert(TransactionIdIsNormal(initializedUptoXID));
 
+	if (IsYugaByteEnabled()) {
+		return;
+	}
+
 	/*
 	 * we set latestObservedXid to the xid SUBTRANS has been initialized up
 	 * to, so we can extend it from that point onwards in
@@ -1057,6 +1074,10 @@ ProcArrayApplyRecoveryInfo(RunningTransactions running)
 	TransactionId *xids;
 	int			nxids;
 	int			i;
+
+	if (IsYugaByteEnabled()) {
+		return;
+	}
 
 	Assert(standbyState >= STANDBY_INITIALIZED);
 	Assert(TransactionIdIsValid(running->nextXid));
@@ -1304,6 +1325,10 @@ ProcArrayApplyXidAssignment(TransactionId topxid,
 	TransactionId max_xid;
 	int			i;
 
+	if (IsYugaByteEnabled()) {
+		return;
+	}
+
 	Assert(standbyState >= STANDBY_INITIALIZED);
 
 	max_xid = TransactionIdLatest(topxid, nsubxids, subxids);
@@ -1394,6 +1419,10 @@ TransactionIdIsInProgress(TransactionId xid)
 	int			mypgxactoff;
 	int			numProcs;
 	int			j;
+
+	if (IsYugaByteEnabled()) {
+		return false;
+	}
 
 	/*
 	 * Don't bother checking a transaction older than RecentXmin; it could not
@@ -1626,6 +1655,10 @@ TransactionIdIsActive(TransactionId xid)
 	TransactionId *other_xids = ProcGlobal->xids;
 	int			i;
 
+	if (IsYugaByteEnabled()) {
+		return false;
+	}
+
 	/*
 	 * Don't bother checking a transaction older than RecentXmin; it could not
 	 * possibly still be running.
@@ -1729,6 +1762,10 @@ ComputeXidHorizons(ComputeXidHorizonsResult *h)
 	TransactionId kaxmin;
 	bool		in_recovery = RecoveryInProgress();
 	TransactionId *other_xids = ProcGlobal->xids;
+
+	if (IsYugaByteEnabled()) {
+		return;
+	}
 
 	/* inferred after ProcArrayLock is released */
 	h->catalog_oldest_nonremovable = InvalidTransactionId;

@@ -49,6 +49,10 @@
 #include "utils/rel.h"
 #include "utils/syscache.h"
 
+/*  YB includes. */
+#include "commands/extension.h"
+#include "pg_yb_utils.h"
+
 static void AlterOpFamilyAdd(AlterOpFamilyStmt *stmt,
 							 Oid amoid, Oid opfamilyoid,
 							 int maxOpNumber, int maxProcNumber,
@@ -377,6 +381,19 @@ DefineOpClass(CreateOpClassStmt *stmt)
 
 	amform = (Form_pg_am) GETSTRUCT(tup);
 	amoid = amform->oid;
+	if (IsYugaByteEnabled() && amoid == LSM_AM_OID)
+	{
+		foreach (l, stmt->items)
+		{
+			CreateOpClassItem *item = lfirst_node(CreateOpClassItem, l);
+			if (item->itemtype == OPCLASS_ITEM_STORAGETYPE)
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("STORAGE clause not supported for CREATE "
+						 "OPERATOR CLASS with lsm access method")));
+		}
+	}
+
 	amroutine = GetIndexAmRoutineByAmId(amoid, false);
 	ReleaseSysCache(tup);
 
@@ -409,11 +426,14 @@ DefineOpClass(CreateOpClassStmt *stmt)
 	 * without solving the halting problem :-(
 	 *
 	 * XXX re-enable NOT_USED code sections below if you remove this test.
+	 * In YB mode, we allow users with the yb_extension role who are in the
+	 * midst of creating an extension to create a base type.
 	 */
-	if (!superuser())
+	if (!(IsYbExtensionUser(GetUserId()) && creating_extension) && !superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("must be superuser to create an operator class")));
+				 errmsg("must be superuser or a member of the yb_extension "
+				 		"role to create an operator class")));
 
 	/* Look up the datatype */
 	typeoid = typenameTypeId(NULL, stmt->datatype);
@@ -855,10 +875,11 @@ AlterOpFamily(AlterOpFamilyStmt *stmt)
 	 *
 	 * XXX re-enable NOT_USED code sections below if you remove this test.
 	 */
-	if (!superuser())
+	if (!superuser() && !(IsYbExtensionUser(GetUserId()) && creating_extension))
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("must be superuser to alter an operator family")));
+				 errmsg("must be superuser or a member of the yb_extension "
+				 		"role to alter an operator family")));
 
 	/*
 	 * ADD and DROP cases need separate code from here on down.
@@ -886,6 +907,11 @@ AlterOpFamilyAdd(AlterOpFamilyStmt *stmt, Oid amoid, Oid opfamilyoid,
 	List	   *operators;		/* OpFamilyMember list for operators */
 	List	   *procedures;		/* OpFamilyMember list for support procs */
 	ListCell   *l;
+
+	if (amoid == LSM_AM_OID)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("unsupported lsm index method for ALTER OPERATOR FAMILY")));
 
 	operators = NIL;
 	procedures = NIL;
@@ -1249,18 +1275,20 @@ assignProcTypes(OpFamilyMember *member, Oid amoid, Oid typeoid,
 	 * returning int4, while proc 2 must be a 2-arg proc returning int8.
 	 * Otherwise we don't know.
 	 */
-	else if (amoid == BTREE_AM_OID)
+	else if (amoid == BTREE_AM_OID ||
+			 (IsYugaByteEnabled() && amoid == LSM_AM_OID))
 	{
+		const char *yb_amname = amoid == BTREE_AM_OID ? "btree" : "lsm";
 		if (member->number == BTORDER_PROC)
 		{
 			if (procform->pronargs != 2)
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-						 errmsg("btree comparison functions must have two arguments")));
+						 errmsg("%s comparison functions must have two arguments", yb_amname)));
 			if (procform->prorettype != INT4OID)
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-						 errmsg("btree comparison functions must return integer")));
+						 errmsg("%s comparison functions must return integer", yb_amname)));
 
 			/*
 			 * If lefttype/righttype isn't specified, use the proc's input
@@ -1277,11 +1305,12 @@ assignProcTypes(OpFamilyMember *member, Oid amoid, Oid typeoid,
 				procform->proargtypes.values[0] != INTERNALOID)
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-						 errmsg("btree sort support functions must accept type \"internal\"")));
+						 errmsg("%s sort support functions must accept type \"internal\"",
+						 yb_amname)));
 			if (procform->prorettype != VOIDOID)
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-						 errmsg("btree sort support functions must return void")));
+						 errmsg("%s sort support functions must return void", yb_amname)));
 
 			/*
 			 * Can't infer lefttype/righttype from proc, so use default rule
@@ -1292,11 +1321,11 @@ assignProcTypes(OpFamilyMember *member, Oid amoid, Oid typeoid,
 			if (procform->pronargs != 5)
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-						 errmsg("btree in_range functions must have five arguments")));
+						 errmsg("%s in_range functions must have five arguments", yb_amname)));
 			if (procform->prorettype != BOOLOID)
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-						 errmsg("btree in_range functions must return boolean")));
+						 errmsg("%s in_range functions must return boolean", yb_amname)));
 
 			/*
 			 * If lefttype/righttype isn't specified, use the proc's input
@@ -1697,6 +1726,14 @@ dropProcedures(List *opfamilyname, Oid amoid, Oid opfamilyoid,
 		performDeletion(&object, DROP_RESTRICT, 0);
 	}
 }
+
+#ifdef NEIL
+/* Pg11 OID interface */
+void RemoveOpFamilyById(Oid opfamilyOid);
+void RemoveOpClassById(Oid opclassOid);
+void RemoveAmOpEntryById(Oid entryOid);
+void RemoveAmProcEntryById(Oid entryOid);
+#endif
 
 /*
  * Subroutine for ALTER OPERATOR CLASS SET SCHEMA/RENAME

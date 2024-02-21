@@ -720,7 +720,7 @@ RemoveStatisticsDataById(Oid statsOid, bool inh)
 	/* We don't know if the data row for inh value exists. */
 	if (HeapTupleIsValid(tup))
 	{
-		CatalogTupleDelete(relation, &tup->t_self);
+		CatalogTupleDelete(relation, tup);
 
 		ReleaseSysCache(tup);
 	}
@@ -763,7 +763,7 @@ RemoveStatisticsById(Oid statsOid)
 
 	CacheInvalidateRelcacheByRelid(relid);
 
-	CatalogTupleDelete(relation, &tup->t_self);
+	CatalogTupleDelete(relation, tup);
 
 	ReleaseSysCache(tup);
 
@@ -895,4 +895,14 @@ StatisticsGetRelation(Oid statId, bool missing_ok)
 	result = stx->stxrelid;
 	ReleaseSysCache(tuple);
 	return result;
+}
+
+/*
+ * YB wrapper for invoking the static ChooseExtendedStatisticName function.
+ */
+char *
+YbChooseExtendedStatisticName(const char *name1, const char *name2,
+							  const char *label, Oid namespaceid)
+{
+	return ChooseExtendedStatisticName(name1, name2, label, namespaceid);
 }

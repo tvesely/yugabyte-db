@@ -40,8 +40,8 @@
 #include "pg_backup_db.h"
 #include "pg_backup_utils.h"
 
-#define TEXT_DUMP_HEADER "--\n-- PostgreSQL database dump\n--\n\n"
-#define TEXT_DUMPALL_HEADER "--\n-- PostgreSQL database cluster dump\n--\n\n"
+#define TEXT_DUMP_HEADER "--\n-- YSQL database dump\n--\n\n"
+#define TEXT_DUMPALL_HEADER "--\n-- YSQL database cluster dump\n--\n\n"
 
 /* state needed to save/restore an archive's output target */
 typedef struct _outputContext
@@ -462,13 +462,13 @@ RestoreArchive(Archive *AHX)
 	if (ropt->filename || ropt->compression)
 		SetOutput(AH, ropt->filename, ropt->compression);
 
-	ahprintf(AH, "--\n-- PostgreSQL database dump\n--\n\n");
+	ahprintf(AH, "--\n-- YSQL database dump\n--\n\n");
 
 	if (AH->archiveRemoteVersion)
 		ahprintf(AH, "-- Dumped from database version %s\n",
 				 AH->archiveRemoteVersion);
 	if (AH->archiveDumpVersion)
-		ahprintf(AH, "-- Dumped by pg_dump version %s\n",
+		ahprintf(AH, "-- Dumped by ysql_dump version %s\n",
 				 AH->archiveDumpVersion);
 
 	ahprintf(AH, "\n");
@@ -738,7 +738,7 @@ RestoreArchive(Archive *AHX)
 	if (AH->public.verbose)
 		dumpTimestamp(AH, "Completed on", time(NULL));
 
-	ahprintf(AH, "--\n-- PostgreSQL database dump complete\n--\n\n");
+	ahprintf(AH, "--\n-- YSQL database dump complete\n--\n\n");
 
 	/*
 	 * Clean up & we're done.
@@ -1163,7 +1163,7 @@ PrintTOCSummary(Archive *AHX)
 		ahprintf(AH, ";     Dumped from database version: %s\n",
 				 AH->archiveRemoteVersion);
 	if (AH->archiveDumpVersion)
-		ahprintf(AH, ";     Dumped by pg_dump version: %s\n",
+		ahprintf(AH, ";     Dumped by ysql_dump version: %s\n",
 				 AH->archiveDumpVersion);
 
 	ahprintf(AH, ";\n;\n; Selected TOC Entries:\n;\n");
@@ -3076,6 +3076,11 @@ _doSetFixedOutputState(ArchiveHandle *AH)
 	/*
 	 * Disable timeouts to allow for slow commands, idle parallel workers, etc
 	 */
+	if (AH->public.dopt->include_yb_metadata)
+	{
+		ahprintf(AH, "SET yb_binary_restore = true;\n");
+		ahprintf(AH, "SET yb_non_ddl_txn_for_sys_tables_allowed = true;\n");
+	}
 	ahprintf(AH, "SET statement_timeout = 0;\n");
 	ahprintf(AH, "SET lock_timeout = 0;\n");
 	ahprintf(AH, "SET idle_in_transaction_session_timeout = 0;\n");
@@ -3442,6 +3447,7 @@ _getObjectDescription(PQExpBuffer buf, TocEntry *te)
 		strcmp(type, "FOREIGN DATA WRAPPER") == 0 ||
 		strcmp(type, "SERVER") == 0 ||
 		strcmp(type, "PUBLICATION") == 0 ||
+		strcmp(type, "TABLEGROUP") == 0 ||
 		strcmp(type, "SUBSCRIPTION") == 0 ||
 		strcmp(type, "USER MAPPING") == 0)
 	{
@@ -3615,6 +3621,7 @@ _printTocEntry(ArchiveHandle *AH, TocEntry *te, bool isData)
 			strcmp(te->desc, "SCHEMA") == 0 ||
 			strcmp(te->desc, "EVENT TRIGGER") == 0 ||
 			strcmp(te->desc, "TABLE") == 0 ||
+			strcmp(te->desc, "TABLEGROUP") == 0 ||
 			strcmp(te->desc, "TYPE") == 0 ||
 			strcmp(te->desc, "VIEW") == 0 ||
 			strcmp(te->desc, "MATERIALIZED VIEW") == 0 ||

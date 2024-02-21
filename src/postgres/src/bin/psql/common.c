@@ -221,6 +221,14 @@ psql_get_variable(const char *varname, PsqlScanQuoteType quote,
 
 
 /*
+ * YB_TODO(jasonk)
+ * - Postgres no longer uses psql_error.
+ * - Need to reintro "YB_DISABLE_ERROR_PREFIX" to Pg15 code.
+ *
+ * psql_error(const char *fmt,...) is gone.
+ */
+
+/*
  * for backend Notice messages (INFO, WARNING, etc)
  */
 void
@@ -728,8 +736,12 @@ StoreQueryTuple(const PGresult *result)
 
 			if (VariableHasHook(pset.vars, varname))
 			{
+				/* YB: the following code is commented out since we don't have pg_log_warning macro.
+				 * Porting over pg_log_warning would require other commits which can be done later.
+
 				pg_log_warning("attempt to \\gset into specially treated variable \"%s\" ignored",
-							   varname);
+								varname);
+				*/
 				continue;
 			}
 

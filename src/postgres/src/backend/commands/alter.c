@@ -53,6 +53,7 @@
 #include "commands/schemacmds.h"
 #include "commands/subscriptioncmds.h"
 #include "commands/tablecmds.h"
+#include "commands/tablegroup.h"
 #include "commands/tablespace.h"
 #include "commands/trigger.h"
 #include "commands/typecmds.h"
@@ -345,6 +346,9 @@ ExecRenameStmt(RenameStmt *stmt)
 		case OBJECT_SCHEMA:
 			return RenameSchema(stmt->subname, stmt->newname);
 
+		case OBJECT_YBTABLEGROUP:
+			return RenameTablegroup(stmt->subname, stmt->newname);
+
 		case OBJECT_TABLESPACE:
 			return RenameTableSpace(stmt->subname, stmt->newname);
 
@@ -374,13 +378,15 @@ ExecRenameStmt(RenameStmt *stmt)
 		case OBJECT_TYPE:
 			return RenameType(stmt);
 
+		case OBJECT_FUNCTION:
+			return RenameFunction(stmt, stmt->newname);
+
 		case OBJECT_AGGREGATE:
 		case OBJECT_COLLATION:
 		case OBJECT_CONVERSION:
 		case OBJECT_EVENT_TRIGGER:
 		case OBJECT_FDW:
 		case OBJECT_FOREIGN_SERVER:
-		case OBJECT_FUNCTION:
 		case OBJECT_OPCLASS:
 		case OBJECT_OPFAMILY:
 		case OBJECT_LANGUAGE:
@@ -651,6 +657,7 @@ AlterObjectNamespace_oid(Oid classId, Oid objid, Oid nspOid,
 		case OCLASS_SCHEMA:
 		case OCLASS_ROLE:
 		case OCLASS_DATABASE:
+		case OCLASS_TBLGROUP:
 		case OCLASS_TBLSPACE:
 		case OCLASS_FDW:
 		case OCLASS_FOREIGN_SERVER:
@@ -665,6 +672,8 @@ AlterObjectNamespace_oid(Oid classId, Oid objid, Oid nspOid,
 		case OCLASS_PUBLICATION_REL:
 		case OCLASS_SUBSCRIPTION:
 		case OCLASS_TRANSFORM:
+		case OCLASS_YBPROFILE:
+		case OCLASS_YBROLE_PROFILE:
 			/* ignore object types that don't have schema-qualified names */
 			break;
 
@@ -869,11 +878,17 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 			return AlterSubscriptionOwner(strVal(stmt->object),
 										  newowner);
 
+		case OBJECT_YBTABLEGROUP:
+			return AlterTablegroupOwner(strVal(stmt->object),
+										newowner);
+		
+		case OBJECT_FUNCTION:
+			return AlterFunctionOwner(stmt,  newowner);
+
 			/* Generic cases */
 		case OBJECT_AGGREGATE:
 		case OBJECT_COLLATION:
 		case OBJECT_CONVERSION:
-		case OBJECT_FUNCTION:
 		case OBJECT_LANGUAGE:
 		case OBJECT_LARGEOBJECT:
 		case OBJECT_OPERATOR:

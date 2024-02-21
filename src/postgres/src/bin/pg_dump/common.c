@@ -38,6 +38,15 @@ static DumpableObject **dumpIdMap = NULL;
 static int	allocedDumpIds = 0;
 static DumpId lastDumpId = 0;	/* Note: 0 is InvalidDumpId */
 
+#ifdef YB_TODO
+/* The dump object structure has changed, so these variables won't work.
+ *
+ * Variables for mapping CatalogId to DumpableObject
+ */
+static DumpableObject **tblgrpinfoindex;
+static int	numTablegroups;
+#endif
+
 /*
  * Infrastructure for mapping CatalogId to DumpableObject
  *
@@ -126,6 +135,11 @@ getSchemaData(Archive *fout, int *numTablesPtr)
 	int			numDefaultACLs;
 	int			numEventTriggers;
 
+#ifdef YB_TODO
+	/* Need rework to match Pg15 */
+	TablegroupInfo *tblgrpinfo;
+#endif
+
 	/*
 	 * We must read extensions and extension membership info first, because
 	 * extension membership needs to be consultable during decisions about
@@ -170,6 +184,13 @@ getSchemaData(Archive *fout, int *numTablesPtr)
 
 	pg_log_info("reading user-defined access methods");
 	getAccessMethods(fout, &numAccessMethods);
+
+#ifdef YB_TODO
+	/* Need rework to match Pg15 */
+	pg_log_info("reading user-defined tablegroups");
+	tblgrpinfo = getTablegroups(fout, &numTablegroups);
+	tblgrpinfoindex = buildIndexArray(tblgrpinfo, numTablegroups, sizeof(TablegroupInfo));
+#endif
 
 	pg_log_info("reading user-defined operator classes");
 	getOpclasses(fout, &numOpclasses);
@@ -901,6 +922,21 @@ findExtensionByOid(Oid oid)
 	dobj = findObjectByCatalogId(catId);
 	Assert(dobj == NULL || dobj->objType == DO_EXTENSION);
 	return (ExtensionInfo *) dobj;
+}
+
+/*
+ * findTablegroupByOid
+ *	  finds the entry (in tblgrpinfo) of the tablegroup with the given oid
+ *	  returns NULL if not found
+ */
+TablegroupInfo *
+findTablegroupByOid(Oid oid)
+{
+#ifdef YB_TODO
+	/* Need rework to match Pg15 */
+	return (TablegroupInfo *) findObjectByOid(oid, tblgrpinfoindex, numTablegroups);
+#endif
+	return NULL;
 }
 
 /*

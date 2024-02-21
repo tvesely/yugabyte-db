@@ -23,6 +23,7 @@
 #include "catalog/namespace.h"
 #include "catalog/pg_enum.h"
 #include "catalog/storage.h"
+#include "catalog/yb_catalog_version.h"
 #include "commands/async.h"
 #include "commands/vacuum.h"
 #include "executor/execParallel.h"
@@ -32,6 +33,7 @@
 #include "miscadmin.h"
 #include "optimizer/optimizer.h"
 #include "pgstat.h"
+#include "pg_yb_utils.h"
 #include "storage/ipc.h"
 #include "storage/predicate.h"
 #include "storage/sinval.h"
@@ -92,6 +94,8 @@ typedef struct FixedParallelState
 	PGPROC	   *parallel_leader_pgproc;
 	pid_t		parallel_leader_pid;
 	BackendId	parallel_leader_backend_id;
+	bool		parallel_master_is_yb_session;
+	uint64_t	parallel_master_yb_session_id;
 	TimestampTz xact_ts;
 	TimestampTz stmt_ts;
 	SerializableXactHandle serializable_xact_handle;
@@ -329,6 +333,9 @@ InitializeParallelDSM(ParallelContext *pcxt)
 	fps->parallel_leader_pgproc = MyProc;
 	fps->parallel_leader_pid = MyProcPid;
 	fps->parallel_leader_backend_id = MyBackendId;
+	/* Capture our Session ID to share with the background workers. */
+	fps->parallel_master_is_yb_session =
+		YbGetCurrentSessionId(&fps->parallel_master_yb_session_id);
 	fps->xact_ts = GetCurrentTransactionStartTimestamp();
 	fps->stmt_ts = GetCurrentStatementStartTimestamp();
 	fps->serializable_xact_handle = ShareSerializableXact();
@@ -1028,7 +1035,7 @@ HandleParallelMessages(void)
 	HOLD_INTERRUPTS();
 
 	/*
-	 * Moreover, CurrentMemoryContext might be pointing almost anywhere.  We
+	 * Moreover, GetCurrentMemoryContext() might be pointing almost anywhere.  We
 	 * don't want to risk leaking data into long-lived contexts, so let's do
 	 * our work here in a private context that we can reset on each use.
 	 */
@@ -1384,9 +1391,10 @@ ParallelWorkerMain(Datum main_arg)
 	entrypt = LookupParallelWorkerFunction(library_name, function_name);
 
 	/* Restore database connection. */
-	BackgroundWorkerInitializeConnectionByOid(fps->database_id,
-											  fps->authenticated_user_id,
-											  0);
+	YbBackgroundWorkerInitializeConnectionByOid(
+		fps->database_id, fps->authenticated_user_id,
+		fps->parallel_master_is_yb_session ?
+			&fps->parallel_master_yb_session_id : NULL, 0);
 
 	/*
 	 * Set the client encoding to the database encoding, since that is what
@@ -1481,6 +1489,15 @@ ParallelWorkerMain(Datum main_arg)
 
 	/* Attach to the leader's serializable transaction, if SERIALIZABLE. */
 	AttachSerializableXact(fps->serializable_xact_handle);
+
+	/*
+	 * TODO Revisit initialization of the catalog cache version.
+	 * DocDB scans running in background workers need a catalog cache version
+	 * to put into the request. However, I'm not sure what is the right way to
+	 * obtain it. Perhaps master scan should share the value it has.
+	 */
+	if (IsYugaByteEnabled())
+		YbUpdateCatalogCacheVersion(YbGetMasterCatalogVersion());
 
 	/*
 	 * We've initialized all of our state now; nothing should change

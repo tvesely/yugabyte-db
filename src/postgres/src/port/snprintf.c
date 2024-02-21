@@ -475,7 +475,7 @@ nextch2:
 				/* set zero padding if no nonzero digits yet */
 				if (accum == 0 && !pointflag)
 					zpad = '0';
-				/* FALL THRU */
+				switch_fallthrough();
 			case '1':
 			case '2':
 			case '3':

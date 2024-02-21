@@ -36,6 +36,8 @@
 #include "utils/syscache.h"
 #include "utils/typcache.h"
 
+/* YB includes. */
+#include "catalog/pg_yb_catalog_version_d.h"
 
 /*
  * Setup a ScanKey for a search in the relation 'rel' for a tuple 'key' that
@@ -435,7 +437,7 @@ ExecSimpleRelationInsert(ResultRelInfo *resultRelInfo,
 
 		/* Check the constraints of the tuple */
 		if (rel->rd_att->constr)
-			ExecConstraints(resultRelInfo, slot, estate);
+			ExecConstraints(resultRelInfo, slot, estate, NULL /* mtstate */);
 		if (rel->rd_rel->relispartition)
 			ExecPartitionCheck(resultRelInfo, slot, estate, true);
 
@@ -445,7 +447,7 @@ ExecSimpleRelationInsert(ResultRelInfo *resultRelInfo,
 		if (resultRelInfo->ri_NumIndices > 0)
 			recheckIndexes = ExecInsertIndexTuples(resultRelInfo,
 												   slot, estate, false, false,
-												   NULL, NIL);
+												   NULL, NIL, NIL /* no_update_index_list */);
 
 		/* AFTER ROW INSERT Triggers */
 		ExecARInsertTriggers(estate, resultRelInfo, slot,
@@ -503,7 +505,7 @@ ExecSimpleRelationUpdate(ResultRelInfo *resultRelInfo,
 
 		/* Check the constraints of the tuple */
 		if (rel->rd_att->constr)
-			ExecConstraints(resultRelInfo, slot, estate);
+			ExecConstraints(resultRelInfo, slot, estate, NULL /* mtstate */);
 		if (rel->rd_rel->relispartition)
 			ExecPartitionCheck(resultRelInfo, slot, estate, true);
 
@@ -513,7 +515,7 @@ ExecSimpleRelationUpdate(ResultRelInfo *resultRelInfo,
 		if (resultRelInfo->ri_NumIndices > 0 && update_indexes)
 			recheckIndexes = ExecInsertIndexTuples(resultRelInfo,
 												   slot, estate, true, false,
-												   NULL, NIL);
+												   NULL, NIL, NIL /* no_update_index_list */);
 
 		/* AFTER ROW UPDATE Triggers */
 		ExecARUpdateTriggers(estate, resultRelInfo,
@@ -624,6 +626,21 @@ CheckCmdReplicaIdentity(Relation rel, CmdType cmd)
 
 	/* REPLICA IDENTITY FULL is also good for UPDATE/DELETE. */
 	if (rel->rd_rel->relreplident == REPLICA_IDENTITY_FULL)
+		return;
+
+	/*
+	 * In per-database catalog version mode at the end of a global-impact
+	 * DDL statement, we internally call yb_increment_all_db_catalog_versions
+	 * which sets yb_non_ddl_txn_for_sys_tables_allowed to true in order to
+	 * update pg_yb_catalog_version table. More generally, a user may want
+	 * to manually set yb_non_ddl_txn_for_sys_tables_allowed to true and then
+	 * perform an update on pg_yb_catalog_version table to force catalog cache
+	 * refresh.
+	 * NOTE: we may need to allow more system tables in YB context.
+	 */
+	if (IsYugaByteEnabled() &&
+		yb_non_ddl_txn_for_sys_tables_allowed &&
+		RelationGetRelid(rel) == YBCatalogVersionRelationId)
 		return;
 
 	/*

@@ -240,6 +240,8 @@ SlabContextCreate(MemoryContext parent,
 						   name)));
 	}
 
+	YbPgMemAddConsumption(headerSize);
+
 	/*
 	 * Avoid writing code that can fail between here and MemoryContextCreate;
 	 * we'd leak the header if we ereport in this stretch.
@@ -308,7 +310,10 @@ SlabReset(MemoryContext context)
 #ifdef CLOBBER_FREED_MEMORY
 			wipe_mem(block, slab->blockSize);
 #endif
+
+			size_t freed_sz = slab->blockSize;
 			free(block);
+			YbPgMemSubConsumption(freed_sz);
 			slab->nblocks--;
 			context->mem_allocated -= slab->blockSize;
 		}
@@ -329,8 +334,11 @@ SlabDelete(MemoryContext context)
 {
 	/* Reset to release all the SlabBlocks */
 	SlabReset(context);
+
+	size_t freed_sz = ((SlabContext *) context)->headerSize;
 	/* And free the context header */
 	free(context);
+	YbPgMemSubConsumption(freed_sz);
 }
 
 /*
@@ -369,6 +377,8 @@ SlabAlloc(MemoryContext context, Size size)
 
 		if (block == NULL)
 			return NULL;
+
+		YbPgMemAddConsumption(slab->blockSize);
 
 		block->nfree = slab->chunksPerBlock;
 		block->firstFreeChunk = 0;
@@ -560,7 +570,9 @@ SlabFree(MemoryContext context, void *pointer)
 	/* If the block is now completely empty, free it. */
 	if (block->nfree == slab->chunksPerBlock)
 	{
+		size_t freed_sz = slab->blockSize;
 		free(block);
+		YbPgMemSubConsumption(freed_sz);
 		slab->nblocks--;
 		context->mem_allocated -= slab->blockSize;
 	}

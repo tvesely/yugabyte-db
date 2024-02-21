@@ -21,6 +21,7 @@
 #include "catalog/pg_type.h"
 #include "executor/functions.h"
 #include "lib/stringinfo.h"
+#include "libpq/pqformat.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
@@ -31,6 +32,9 @@
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
+
+#include "pg_yb_utils.h"
+#include <pthread.h>
 
 /*
  * Hooks for function calls
@@ -49,6 +53,7 @@ typedef struct
 	ItemPointerData fn_tid;
 	PGFunction	user_fn;		/* the function's address */
 	const Pg_finfo_record *inforec; /* address of its info record */
+	uint64 yb_catalog_version; /* catalog version at function load time */
 } CFuncHashTabEntry;
 
 static HTAB *CFuncHash = NULL;
@@ -65,6 +70,34 @@ static void record_C_func(HeapTuple procedureTuple,
 /* extern so it's callable via JIT */
 extern Datum fmgr_security_definer(PG_FUNCTION_ARGS);
 
+extern void int2send_direct(StringInfo buf, Datum value);
+extern void int4send_direct(StringInfo buf, Datum value);
+extern void int8send_direct(StringInfo buf, Datum value);
+
+typedef void (*SendDirectFn)(StringInfo, Datum);
+
+/*
+ * Initialize direct send function with specified oid with specified func.
+ */
+static void
+fmgr_init_direct_send_func(Oid oid, SendDirectFn func)
+{
+	fmgr_builtins[fmgr_builtin_oid_index[oid]].alt_func = func;
+}
+
+/*
+ * Initialize all direct send functions.
+ */
+#define PG_PROC_INT2SEND_OID 2405
+#define PG_PROC_INT4SEND_OID 2407
+#define PG_PROC_INT8SEND_OID 2409
+static void
+fmgr_init_direct_send()
+{
+	fmgr_init_direct_send_func(PG_PROC_INT2SEND_OID, int2send_direct);
+	fmgr_init_direct_send_func(PG_PROC_INT4SEND_OID, int4send_direct);
+	fmgr_init_direct_send_func(PG_PROC_INT8SEND_OID, int8send_direct);
+}
 
 /*
  * Lookup routines for builtin-function table.  We can search by either Oid
@@ -79,6 +112,9 @@ fmgr_isbuiltin(Oid id)
 	/* fast lookup only possible if original oid still assigned */
 	if (id > fmgr_last_builtin_oid)
 		return NULL;
+
+	static pthread_once_t initialized = PTHREAD_ONCE_INIT;
+	pthread_once(&initialized, &fmgr_init_direct_send);
 
 	/*
 	 * Lookup function data. If there's a miss in that range it's likely a
@@ -109,11 +145,17 @@ fmgr_lookupByName(const char *name)
 	return NULL;
 }
 
+bool
+is_builtin_func(Oid id)
+{
+	return fmgr_isbuiltin(id) != NULL;
+}
+
 /*
  * This routine fills a FmgrInfo struct, given the OID
  * of the function to be called.
  *
- * The caller's CurrentMemoryContext is used as the fn_mcxt of the info
+ * The caller's GetCurrentMemoryContext() is used as the fn_mcxt of the info
  * struct; this means that any subsidiary data attached to the info struct
  * (either by fmgr_info itself, or later on by a function call handler)
  * will be allocated in that context.  The caller must ensure that this
@@ -125,7 +167,7 @@ fmgr_lookupByName(const char *name)
 void
 fmgr_info(Oid functionId, FmgrInfo *finfo)
 {
-	fmgr_info_cxt_security(functionId, finfo, CurrentMemoryContext, false);
+	fmgr_info_cxt_security(functionId, finfo, GetCurrentMemoryContext(), false);
 }
 
 /*
@@ -162,6 +204,7 @@ fmgr_info_cxt_security(Oid functionId, FmgrInfo *finfo, MemoryContext mcxt,
 	finfo->fn_extra = NULL;
 	finfo->fn_mcxt = mcxt;
 	finfo->fn_expr = NULL;		/* caller may set this later */
+	finfo->fn_alt = NULL;
 
 	if ((fbp = fmgr_isbuiltin(functionId)) != NULL)
 	{
@@ -174,6 +217,7 @@ fmgr_info_cxt_security(Oid functionId, FmgrInfo *finfo, MemoryContext mcxt,
 		finfo->fn_stats = TRACK_FUNC_ALL;	/* ie, never track */
 		finfo->fn_addr = fbp->func;
 		finfo->fn_oid = functionId;
+		finfo->fn_alt = fbp->alt_func;
 		return;
 	}
 
@@ -448,7 +492,7 @@ fmgr_info_other_lang(Oid functionId, FmgrInfo *finfo, HeapTuple procedureTuple)
 	 * to get back a bare pointer to the actual C-language function.
 	 */
 	fmgr_info_cxt_security(languageStruct->lanplcallfoid, &plfinfo,
-						   CurrentMemoryContext, true);
+						   GetCurrentMemoryContext(), true);
 	finfo->fn_addr = plfinfo.fn_addr;
 
 	ReleaseSysCache(languageTuple);
@@ -540,7 +584,9 @@ lookup_C_func(HeapTuple procedureTuple)
 					NULL);
 	if (entry == NULL)
 		return NULL;			/* no such entry */
-	if (entry->fn_xmin == HeapTupleHeaderGetRawXmin(procedureTuple->t_data) &&
+
+	if (IsYugaByteEnabled() ? entry->yb_catalog_version == YBGetActiveCatalogCacheVersion() :
+		entry->fn_xmin == HeapTupleHeaderGetRawXmin(procedureTuple->t_data) &&
 		ItemPointerEquals(&entry->fn_tid, &procedureTuple->t_self))
 		return entry;			/* OK */
 	return NULL;				/* entry is out of date */
@@ -580,6 +626,7 @@ record_C_func(HeapTuple procedureTuple,
 	entry->fn_tid = procedureTuple->t_self;
 	entry->user_fn = user_fn;
 	entry->inforec = inforec;
+	entry->yb_catalog_version = YBGetActiveCatalogCacheVersion();
 }
 
 
@@ -1620,6 +1667,29 @@ bytea *
 SendFunctionCall(FmgrInfo *flinfo, Datum val)
 {
 	return DatumGetByteaP(FunctionCall1(flinfo, val));
+}
+
+/*
+ * Call a previously-looked-up datatype binary-output function.
+ *
+ * Putting output to specified StringInfo buffer.
+ */
+void
+StringInfoSendFunctionCall(StringInfo buf, FmgrInfo *flinfo, Datum val)
+{
+	void (*alt)(StringInfo, Datum) = flinfo->fn_alt;
+	if (alt) {
+		// There is function to send value directly to buf, w/o intermediate
+		// conversion to bytea.
+		alt(buf, val);
+		return;
+	}
+
+	bytea *outputbytes = SendFunctionCall(flinfo, val);
+	uint32 size = VARSIZE(outputbytes) - VARHDRSZ;
+	pq_sendint32(buf, size);
+	pq_sendbytes(buf, VARDATA(outputbytes), size);
+	pfree(outputbytes);
 }
 
 /*

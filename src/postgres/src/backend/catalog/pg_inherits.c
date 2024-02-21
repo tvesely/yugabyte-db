@@ -32,6 +32,9 @@
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 
+#include "utils/catcache.h"
+#include "pg_yb_utils.h"
+
 /*
  * Entry of a hash table used in find_all_inheritors. See below.
  */
@@ -264,7 +267,7 @@ find_all_inheritors(Oid parentrelId, LOCKMODE lockmode, List **numparents)
 
 	ctl.keysize = sizeof(Oid);
 	ctl.entrysize = sizeof(SeenRelsEntry);
-	ctl.hcxt = CurrentMemoryContext;
+	ctl.hcxt = GetCurrentMemoryContext();
 
 	seen_rels = hash_create("find_all_inheritors temporary table",
 							32, /* start small and extend */
@@ -601,7 +604,7 @@ DeleteInheritsTuple(Oid inhrelid, Oid inhparent, bool expect_detach_pending,
 								childname ? childname : "unknown relation"),
 						 errdetail("There's no pending concurrent detach.")));
 
-			CatalogTupleDelete(catalogRelation, &inheritsTuple->t_self);
+			CatalogTupleDelete(catalogRelation, inheritsTuple);
 			found = true;
 		}
 	}

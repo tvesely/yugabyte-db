@@ -56,6 +56,13 @@
 #include "utils/array.h"
 #include "utils/lsyscache.h"
 
+/* Yugabyte includes */
+#include "access/relation.h"
+#include "catalog/pg_class.h"
+#include "partitioning/partprune.h"
+#include "utils/fmgroids.h"
+#include "utils/rel.h"
+#include "pg_yb_utils.h"
 
 /*
  * Information about a clause matched with a partition key.
@@ -206,6 +213,15 @@ static void partkey_datum_from_expr(PartitionPruneContext *context,
 									Expr *expr, int stateidx,
 									Datum *value, bool *isnull);
 
+/* Yugabyte support */
+static PartitionPruneStep *gen_prune_steps_from_func_exprs(GeneratePruningStepsContext *context,
+														   List *exprs);
+static PruneStepResult *perform_pruning_func_step(PartitionPruneContext *context,
+												  PartitionPruneStepFuncOp *step);
+static bool perform_func_expr_pruning(PartitionPruneContext *context,
+									  int partIndex,
+									  List *funcExprs);
+static bool canUseFunctionForPartitionPruning(Oid funcoid);
 
 /*
  * make_partition_pruneinfo
@@ -749,7 +765,7 @@ gen_partprune_steps(RelOptInfo *rel, List *clauses, PartClauseTarget target,
  * Callers must ensure that 'rel' is a partitioned table.
  */
 Bitmapset *
-prune_append_rel_partitions(RelOptInfo *rel)
+prune_append_rel_partitions(RelOptInfo *rel, Oid *yb_oids)
 {
 	List	   *clauses = rel->baserestrictinfo;
 	List	   *pruning_steps;
@@ -794,7 +810,11 @@ prune_append_rel_partitions(RelOptInfo *rel)
 	context.stepcmpfuncs = (FmgrInfo *) palloc0(sizeof(FmgrInfo) *
 												context.partnatts *
 												list_length(pruning_steps));
-	context.ppccontext = CurrentMemoryContext;
+	context.ppccontext = GetCurrentMemoryContext();
+	context.partrelids = (Oid *) palloc0(sizeof(Oid) * rel->nparts);
+
+	for (int i = 0; i < rel->nparts; ++i)
+		context.partrelids[i] = yb_oids[i];
 
 	/* These are not valid when being called from the planner */
 	context.planstate = NULL;
@@ -859,6 +879,12 @@ get_matching_partitions(PartitionPruneContext *context, List *pruning_steps)
 					perform_pruning_combine_step(context,
 												 (PartitionPruneStepCombine *) step,
 												 results);
+				break;
+
+			case T_PartitionPruneStepFuncOp:
+				results[step->step_id] =
+					perform_pruning_func_step(context,
+											  (PartitionPruneStepFuncOp *) step);
 				break;
 
 			default:
@@ -970,6 +996,8 @@ gen_partprune_steps_internal(GeneratePruningStepsContext *context,
 	bool		generate_opsteps = false;
 	List	   *result = NIL;
 	ListCell   *lc;
+	bool generate_func_steps = false;
+	List *function_clauses = NIL;
 
 	/*
 	 * If this partitioned relation has a default partition and is itself a
@@ -1224,6 +1252,31 @@ gen_partprune_steps_internal(GeneratePruningStepsContext *context,
 			/* done; go check the next clause. */
 			break;
 		}
+
+		/*
+		 * Check if this clause involves a function expression that can be
+		 * used for partition pruning.
+		 */
+		if (IsA(clause, FuncExpr))
+		{
+			FuncExpr   *fexpr = (FuncExpr *) clause;
+			if (canUseFunctionForPartitionPruning(fexpr->funcid))
+			{
+				generate_func_steps = true;
+				function_clauses = lappend(function_clauses, clause);
+			}
+		}
+	}
+
+	/*
+	 * If function-based pruning can be done, generate steps for it.
+	 */
+	if (generate_func_steps)
+	{
+		PartitionPruneStep *step =
+			gen_prune_steps_from_func_exprs(context, function_clauses);
+		if (step != NULL)
+			result = lappend(result, step);
 	}
 
 	/*-----------
@@ -1302,6 +1355,27 @@ gen_partprune_steps_internal(GeneratePruningStepsContext *context,
 	}
 
 	return result;
+}
+
+/*
+ * gen_prune_steps_from_func_exprs
+ *		Generate a pruning step for function calls
+ *
+ * The step is assigned a unique step identifier and added to context's 'steps'
+ * list
+ */
+static PartitionPruneStep *
+gen_prune_steps_from_func_exprs(GeneratePruningStepsContext *context,
+								List *exprs)
+{
+	PartitionPruneStepFuncOp *step =
+		makeNode(PartitionPruneStepFuncOp);
+
+	step->step.step_id = context->next_step_id++;
+	step->exprs = exprs;
+	context->steps = lappend(context->steps, step);
+
+	return (PartitionPruneStep *) step;
 }
 
 /*
@@ -2773,7 +2847,7 @@ get_matching_list_bounds(PartitionPruneContext *context,
 
 		case BTGreaterEqualStrategyNumber:
 			inclusive = true;
-			/* fall through */
+			switch_fallthrough();
 		case BTGreaterStrategyNumber:
 			off = partition_list_bsearch(partsupfunc,
 										 partcollation,
@@ -2808,7 +2882,7 @@ get_matching_list_bounds(PartitionPruneContext *context,
 
 		case BTLessEqualStrategyNumber:
 			inclusive = true;
-			/* fall through */
+			switch_fallthrough();
 		case BTLessStrategyNumber:
 			off = partition_list_bsearch(partsupfunc,
 										 partcollation,
@@ -3055,7 +3129,7 @@ get_matching_range_bounds(PartitionPruneContext *context,
 
 		case BTGreaterEqualStrategyNumber:
 			inclusive = true;
-			/* fall through */
+			switch_fallthrough();
 		case BTGreaterStrategyNumber:
 
 			/*
@@ -3136,7 +3210,7 @@ get_matching_range_bounds(PartitionPruneContext *context,
 
 		case BTLessEqualStrategyNumber:
 			inclusive = true;
-			/* fall through */
+			switch_fallthrough();
 		case BTLessStrategyNumber:
 
 			/*
@@ -3473,6 +3547,110 @@ perform_pruning_base_step(PartitionPruneContext *context,
 }
 
 /*
+ * perform_pruning_func_step
+ * 		Determines the indexes of datums that satisfy conditions specified in
+ * 		'fstep'.
+ *
+ * Result also contains whether special null-accepting and/or default
+ * partition need to be scanned.
+ */
+static PruneStepResult *
+perform_pruning_func_step(PartitionPruneContext *context,
+						  PartitionPruneStepFuncOp *fstep)
+{
+	PruneStepResult *result =
+		(PruneStepResult *) palloc0(sizeof(PruneStepResult));
+	PartitionBoundInfo boundinfo = context->boundinfo;
+	result->bound_offsets = NULL;
+
+	int        *partindices = boundinfo->indexes;
+	List	   *exprs = fstep->exprs;
+	for (int boundoffset = 0; boundoffset < boundinfo->ndatums; ++boundoffset)
+	{
+		bool isSelected =
+			perform_func_expr_pruning(context,
+									  partindices[boundoffset],
+									  exprs);
+
+		if (isSelected)
+		{
+			result->bound_offsets =
+				bms_add_member(result->bound_offsets, boundoffset);
+		}
+	}
+
+	/*
+	 * Check for the null and default partition.
+	 */
+	result->scan_default =
+		perform_func_expr_pruning(context,
+								  boundinfo->default_index,
+								  exprs);
+	result->scan_null =
+		perform_func_expr_pruning(context,
+								  boundinfo->null_index,
+								  exprs);
+	return result;
+}
+
+/*
+ * perform_func_expr_pruning
+ * 		Returns whether the partition corresponding to 'partIndex' survived
+ * 		partition pruning based on the function expressions in 'funcExprs'.
+ */
+static bool perform_func_expr_pruning(PartitionPruneContext *context,
+									  int partIndex,
+									  List *funcExprs)
+{
+	if (partIndex < 0)
+	{
+		/*
+		 * In range and hash partitioning cases, some bound offsets may map
+		 * to partIndex -1. This indicates that no partition has been defined
+		 * to accept a given range of data or for a given reminder
+		 * respectively. If such a bound does not get pruned, this usually
+		 * indicates that the default partition (if any) needs to be scanned.
+		 * Function Expression pruning is used to select a partition based on
+		 * its table properties. Therefore we will use the default partition's
+		 * table properties to determine whether to prune it or not, and do not
+		 * need to rely on bound offsets that don't map to any partitions.
+		 * Safely reject this bound offset.
+		 */
+		return false;
+	}
+	Oid partrelid = context->partrelids[partIndex];
+
+	Relation relation = relation_open(partrelid, 1);
+	const char relkind = relation->rd_rel->relkind;
+	RelationClose(relation);
+
+	if (relkind == RELKIND_PARTITIONED_TABLE)
+	{
+		/*
+		 * We should not eliminate a partitioned table.
+		 */
+		return true;
+	}
+
+	ListCell   *lc = list_head(funcExprs);
+	FuncExpr   *expr = (FuncExpr *) lfirst(lc);
+
+	/*
+	 * Currently pruning can be performed only for one function:
+	 * yb_is_local_table.
+	 */
+	Assert(expr->funcid == F_YB_IS_LOCAL_TABLE);
+
+	FmgrInfo* finfo = (FmgrInfo *) palloc0(sizeof(FmgrInfo));
+	fmgr_info_cxt(expr->funcid, finfo, context->ppccontext);
+
+	const bool isSelected =
+			BoolGetDatum(FunctionCall1(finfo,
+									   UInt32GetDatum(partrelid)));
+	return isSelected;
+}
+
+/*
  * perform_pruning_combine_step
  *		Determines the indexes of datums obtained by combining those given
  *		by the steps identified by cstep->source_stepids using the specified
@@ -3692,4 +3870,13 @@ partkey_datum_from_expr(PartitionPruneContext *context,
 		ectx = context->exprcontext;
 		*value = ExecEvalExprSwitchContext(exprstate, ectx, isnull);
 	}
+}
+
+static bool canUseFunctionForPartitionPruning(Oid funcoid)
+{
+	/*
+	 * For now, only one function is supported.
+	 * This is the yb_is_local_table function.
+	 */
+	return funcoid == F_YB_IS_LOCAL_TABLE;
 }

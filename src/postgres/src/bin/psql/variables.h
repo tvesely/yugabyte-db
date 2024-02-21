@@ -86,7 +86,6 @@ void		PrintVariables(VariableSpace space);
 bool		SetVariable(VariableSpace space, const char *name, const char *value);
 bool		SetVariableBool(VariableSpace space, const char *name);
 bool		DeleteVariable(VariableSpace space, const char *name);
-
 void		SetVariableHooks(VariableSpace space, const char *name,
 							 VariableSubstituteHook shook,
 							 VariableAssignHook ahook);

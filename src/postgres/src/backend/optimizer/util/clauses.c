@@ -154,6 +154,17 @@ static Node *substitute_actual_srf_parameters_mutator(Node *node,
 													  substitute_actual_srf_parameters_context *context);
 static bool pull_paramids_walker(Node *node, Bitmapset **context);
 
+/*****************************************************************************
+ *		ScalarArrayOperator clause functions
+ *****************************************************************************/
+
+Node *
+yb_get_saop_left_op(const Expr *clause)
+{
+	const ScalarArrayOpExpr *expr = (const ScalarArrayOpExpr *) clause;
+
+	return linitial(expr->args);
+}
 
 /*****************************************************************************
  *		Aggregate-function clause manipulation
@@ -1191,6 +1202,12 @@ contain_leaked_vars_walker(Node *node, void *context)
 			 */
 			break;
 
+		case T_YbBatchedExpr:
+			{
+				contain_leaked_vars_walker(
+					(Node *) ((YbBatchedExpr*) node)->orig_expr, context);
+				break;
+			}
 		case T_FuncExpr:
 		case T_OpExpr:
 		case T_DistinctExpr:
@@ -1422,7 +1439,7 @@ find_nonnullable_rels_walker(Node *node, bool top_level)
 				 * the intersection of the sets of nonnullable rels, just as
 				 * for OR.  Fall through to share code.
 				 */
-				/* FALL THRU */
+				switch_fallthrough();
 			case OR_EXPR:
 
 				/*
@@ -1647,7 +1664,7 @@ find_nonnullable_vars_walker(Node *node, bool top_level)
 				 * the intersection of the sets of nonnullable vars, just as
 				 * for OR.  Fall through to share code.
 				 */
-				/* FALL THRU */
+				switch_fallthrough();
 			case OR_EXPR:
 
 				/*
@@ -4413,7 +4430,7 @@ inline_function(Oid funcid, Oid result_type, Oid result_collid,
 	 * Make a temporary memory context, so that we don't leak all the stuff
 	 * that parsing might create.
 	 */
-	mycxt = AllocSetContextCreate(CurrentMemoryContext,
+	mycxt = AllocSetContextCreate(GetCurrentMemoryContext(),
 								  "inline_function",
 								  ALLOCSET_DEFAULT_SIZES);
 	oldcxt = MemoryContextSwitchTo(mycxt);
@@ -4987,7 +5004,7 @@ inline_set_returning_function(PlannerInfo *root, RangeTblEntry *rte)
 	 * Make a temporary memory context, so that we don't leak all the stuff
 	 * that parsing might create.
 	 */
-	mycxt = AllocSetContextCreate(CurrentMemoryContext,
+	mycxt = AllocSetContextCreate(GetCurrentMemoryContext(),
 								  "inline_set_returning_function",
 								  ALLOCSET_DEFAULT_SIZES);
 	oldcxt = MemoryContextSwitchTo(mycxt);
@@ -5143,6 +5160,13 @@ inline_set_returning_function(PlannerInfo *root, RangeTblEntry *rte)
 	 */
 	record_plan_function_dependency(root, func_oid);
 
+	/*
+	 * We must also notice if the inserted query adds a dependency on the
+	 * calling role due to RLS quals.
+	 */
+	if (querytree->hasRowSecurity)
+		root->glob->dependsOnRole = true;
+
 	return querytree;
 
 	/* Here if func is not inlinable: release temp memory and return NULL */
@@ -5245,4 +5269,41 @@ pull_paramids_walker(Node *node, Bitmapset **context)
 	}
 	return expression_tree_walker(node, pull_paramids_walker,
 								  (void *) context);
+}
+
+typedef struct replace_varnos_context
+{
+	Index oldvarno;
+	Index newvarno;
+} replace_varnos_context;
+
+static Node *yb_copy_replace_varnos_mutator(Node *node,
+							   				replace_varnos_context *context)
+{
+	if (node == NULL)
+		return NULL;
+
+	if (IsA(node, Var))
+	{
+		Var *var = (Var *) node;
+		if (var->varno == context->oldvarno)
+		{
+			Var *newvar = copyObject(var);
+			newvar->varno = context->newvarno;
+			return (Node *) newvar;
+		}
+	}
+
+	return expression_tree_mutator(node,
+								   yb_copy_replace_varnos_mutator,
+								   (void *) context);
+}
+
+Expr *yb_copy_replace_varnos(Expr *expr, Index oldvarno, Index newvarno)
+{
+	replace_varnos_context ctx;
+	ctx.oldvarno = oldvarno;
+	ctx.newvarno = newvarno;
+	return (Expr *) yb_copy_replace_varnos_mutator((Node *) expr,
+								   			  	   (void *) &ctx);
 }

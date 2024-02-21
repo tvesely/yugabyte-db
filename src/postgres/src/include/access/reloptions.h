@@ -30,6 +30,7 @@ typedef enum relopt_type
 {
 	RELOPT_TYPE_BOOL,
 	RELOPT_TYPE_INT,
+	RELOPT_TYPE_OID,
 	RELOPT_TYPE_REAL,
 	RELOPT_TYPE_ENUM,
 	RELOPT_TYPE_STRING
@@ -51,8 +52,12 @@ typedef enum relopt_kind
 	RELOPT_KIND_VIEW = (1 << 9),
 	RELOPT_KIND_BRIN = (1 << 10),
 	RELOPT_KIND_PARTITIONED = (1 << 11),
+	RELOPT_KIND_YB_TABLESPACE = (1 << 12),
+	RELOPT_KIND_YB_LSM = (1 << 13),
 	/* if you add a new kind, make sure you update "last_default" too */
-	RELOPT_KIND_LAST_DEFAULT = RELOPT_KIND_PARTITIONED,
+	RELOPT_KIND_LAST_DEFAULT = RELOPT_KIND_YB_LSM,
+	RELOPT_KIND_INDEX = RELOPT_KIND_BTREE | RELOPT_KIND_HASH | RELOPT_KIND_GIN | RELOPT_KIND_SPGIST |
+						RELOPT_KIND_YB_LSM,
 	/* some compilers treat enums as signed ints, so we can't use 1 << 31 */
 	RELOPT_KIND_MAX = (1 << 30)
 } relopt_kind;
@@ -82,6 +87,7 @@ typedef struct relopt_value
 		bool		bool_val;
 		int			int_val;
 		double		real_val;
+		Oid			oid_val;
 		int			enum_val;
 		char	   *string_val; /* allocated separately */
 	}			values;
@@ -109,6 +115,14 @@ typedef struct relopt_real
 	double		min;
 	double		max;
 } relopt_real;
+
+typedef struct relopt_oid
+{
+	relopt_gen	gen;
+	Oid			default_val;
+	Oid			min;
+	Oid			max;
+} relopt_oid;
 
 /*
  * relopt_enum_elt_def -- One member of the array of acceptable values
@@ -160,6 +174,15 @@ typedef struct local_relopt
 	relopt_gen *option;			/* option definition */
 	int			offset;			/* offset of parsed value in bytea structure */
 } local_relopt;
+
+#define HANDLE_OID_RELOPTION(optname, var, option, wasset)		\
+	do {														\
+		if (option.isset)										\
+			var = option.values.oid_val;						\
+		else													\
+			var = ((relopt_oid *) option.gen)->default_val;		\
+		(wasset) != NULL ? *(wasset) = option.isset : (dummyret)NULL; \
+	} while (0)
 
 /* Structure to hold local reloption data for build_local_reloptions() */
 typedef struct local_relopts
@@ -222,9 +245,12 @@ extern void add_local_string_reloption(local_relopts *opts, const char *name,
 extern Datum transformRelOptions(Datum oldOptions, List *defList,
 								 const char *namspace, char *validnsps[],
 								 bool acceptOidsOff, bool isReset);
+extern Datum ybExcludeNonPersistentReloptions(Datum options);
 extern List *untransformRelOptions(Datum options);
 extern bytea *extractRelOptions(HeapTuple tuple, TupleDesc tupdesc,
 								amoptions_function amoptions);
+extern relopt_value *parseRelOptions(Datum options, bool validate, relopt_kind kind,
+									 int *numrelopts);
 extern void *build_reloptions(Datum reloptions, bool validate,
 							  relopt_kind kind,
 							  Size relopt_struct_size,
@@ -242,6 +268,7 @@ extern bytea *index_reloptions(amoptions_function amoptions, Datum reloptions,
 							   bool validate);
 extern bytea *attribute_reloptions(Datum reloptions, bool validate);
 extern bytea *tablespace_reloptions(Datum reloptions, bool validate);
+extern bytea *yb_tablespace_reloptions(Datum reloptions, bool validate);
 extern LOCKMODE AlterTableGetRelOptionsLockLevel(List *defList);
 
 #endif							/* RELOPTIONS_H */

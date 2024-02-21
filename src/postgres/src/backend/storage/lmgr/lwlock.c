@@ -212,7 +212,7 @@ LWLockPadded *MainLWLockArray = NULL;
  */
 #define MAX_SIMUL_LWLOCKS	200
 
-/* struct representing the LWLocks we're holding */
+ /* struct representing the LWLocks we're holding */
 typedef struct LWLockHandle
 {
 	LWLock	   *lock;
@@ -1062,10 +1062,19 @@ LWLockQueueSelf(LWLock *lock, LWLockMode mode)
 	 * should never occur, since MyProc should only be null during shared
 	 * memory initialization.
 	 */
-	if (MyProc == NULL)
+	PGPROC *proc = MyProc;
+
+	if (!IsUnderPostmaster && MyProc == NULL)
+	{
+		if (KilledProcToClean == NULL)
+			elog(PANIC, "postmaster cannot wait without a killed process struct");
+		proc = KilledProcToClean;
+	}
+
+	if (proc == NULL)
 		elog(PANIC, "cannot wait without a PGPROC structure");
 
-	if (MyProc->lwWaiting)
+	if (proc->lwWaiting)
 		elog(PANIC, "queueing for lock while waiting on another one");
 
 	LWLockWaitListLock(lock);
@@ -1073,14 +1082,14 @@ LWLockQueueSelf(LWLock *lock, LWLockMode mode)
 	/* setting the flag is protected by the spinlock */
 	pg_atomic_fetch_or_u32(&lock->state, LW_FLAG_HAS_WAITERS);
 
-	MyProc->lwWaiting = true;
-	MyProc->lwWaitMode = mode;
+	proc->lwWaiting = true;
+	proc->lwWaitMode = mode;
 
 	/* LW_WAIT_UNTIL_FREE waiters are always at the front of the queue */
 	if (mode == LW_WAIT_UNTIL_FREE)
-		proclist_push_head(&lock->waiters, MyProc->pgprocno, lwWaitLink);
+		proclist_push_head(&lock->waiters, proc->pgprocno, lwWaitLink);
 	else
-		proclist_push_tail(&lock->waiters, MyProc->pgprocno, lwWaitLink);
+		proclist_push_tail(&lock->waiters, proc->pgprocno, lwWaitLink);
 
 	/* Can release the mutex now */
 	LWLockWaitListUnlock(lock);
@@ -1204,6 +1213,9 @@ LWLockAcquire(LWLock *lock, LWLockMode mode)
 	lwstats = get_lwlock_stats_entry(lock);
 #endif
 
+	if (!IsUnderPostmaster && MyProc == NULL && KilledProcToClean != NULL)
+		proc = KilledProcToClean;
+
 	AssertArg(mode == LW_SHARED || mode == LW_EXCLUSIVE);
 
 	PRINT_LWDEBUG("LWLockAcquire", lock, mode);
@@ -1226,6 +1238,22 @@ LWLockAcquire(LWLock *lock, LWLockMode mode)
 	/* Ensure we will have room to remember the lock */
 	if (num_held_lwlocks >= MAX_SIMUL_LWLOCKS)
 		elog(ERROR, "too many LWLocks taken");
+
+    /*
+	 * ybLWLockAcquired is true when a postgres backend has acquired one or more
+	 * LWLocks.ybLWLockAcquired is false if and only if a backed does not hold
+	 * any LWLock.
+	 *
+	 * When ybLWLockAcquired is set true, when the backend starts the process of
+	 * acquiring a LWLock. If a postgres backend dies at a point when
+	 * ybLWLockAcquired is true the postmaster issues a full postmaster restart.
+	 * This is because during the acquisition of LWLocks by postgres backends,
+	 * they are prone to modify shared memory. At this time, if the backend dies
+	 * there is a chance of shared memory being corrupted. Hence,
+	 * the postmaster issues a full postmaster restart.
+	 */
+	if (proc != NULL)
+		proc->ybLWLockAcquired = true;
 
 	/*
 	 * Lock out cancel/die interrupts until we exit the code section protected
@@ -1383,11 +1411,17 @@ LWLockConditionalAcquire(LWLock *lock, LWLockMode mode)
 	 */
 	HOLD_INTERRUPTS();
 
+	if (MyProc != NULL)
+		MyProc->ybLWLockAcquired = true;
+
 	/* Check for the lock */
 	mustwait = LWLockAttemptLock(lock, mode);
 
 	if (mustwait)
 	{
+		if (MyProc != NULL && !num_held_lwlocks)
+			MyProc->ybLWLockAcquired = false;
+
 		/* Failed to get lock, so release interrupt holdoff */
 		RESUME_INTERRUPTS();
 
@@ -1446,6 +1480,8 @@ LWLockAcquireOrWait(LWLock *lock, LWLockMode mode)
 	 * manipulations of data structures in shared memory.
 	 */
 	HOLD_INTERRUPTS();
+	if (MyProc != NULL)
+		MyProc->ybLWLockAcquired = true;
 
 	/*
 	 * NB: We're using nearly the same twice-in-a-row lock acquisition
@@ -1859,6 +1895,16 @@ LWLockRelease(LWLock *lock)
 		LOG_LWDEBUG("LWLockRelease", lock, "releasing waiters");
 		LWLockWakeup(lock);
 	}
+
+	/*
+	 * ybLWLockAcquired is true when the current backend is holding any of the
+	 * shared LWLock. Similarly, ybLWLockAcquired is false when it is holding 0
+	 * (zero) LWLocks. Hence, in situations where a backend acquires multiple
+	 * LWLocks, ybLWLockAcquired is set to false only when the number of acquired
+	 * LWLocks is 0.
+	 */
+	if (MyProc != NULL && !num_held_lwlocks)
+		MyProc->ybLWLockAcquired = false;
 
 	/*
 	 * Now okay to allow cancel/die interrupts.

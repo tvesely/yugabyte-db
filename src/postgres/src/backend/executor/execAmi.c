@@ -41,6 +41,7 @@
 #include "executor/nodeMergejoin.h"
 #include "executor/nodeModifyTable.h"
 #include "executor/nodeNamedtuplestorescan.h"
+#include "executor/nodeYbBatchedNestloop.h"
 #include "executor/nodeNestloop.h"
 #include "executor/nodeProjectSet.h"
 #include "executor/nodeRecursiveunion.h"
@@ -63,6 +64,10 @@
 #include "nodes/pathnodes.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
+
+/* Yugabyte includes */
+#include "pg_yb_utils.h"
+#include "executor/nodeYbSeqscan.h"
 
 static bool IndexSupportsBackwardScan(Oid indexid);
 
@@ -167,6 +172,10 @@ ExecReScan(PlanState *node)
 			ExecReScanSeqScan((SeqScanState *) node);
 			break;
 
+		case T_YbSeqScanState:
+			ExecReScanYbSeqScan((YbSeqScanState *) node);
+			break;
+
 		case T_SampleScanState:
 			ExecReScanSampleScan((SampleScanState *) node);
 			break;
@@ -241,6 +250,10 @@ ExecReScan(PlanState *node)
 
 		case T_NestLoopState:
 			ExecReScanNestLoop((NestLoopState *) node);
+			break;
+
+		case T_YbBatchedNestLoopState:
+			ExecReScanYbBatchedNestLoop((YbBatchedNestLoopState *) node);
 			break;
 
 		case T_MergeJoinState:
@@ -427,11 +440,23 @@ ExecSupportsMarkRestore(Path *pathnode)
 	{
 		case T_IndexScan:
 		case T_IndexOnlyScan:
-
-			/*
-			 * Not all index types support mark/restore.
-			 */
-			return castNode(IndexPath, pathnode)->indexinfo->amcanmarkpos;
+			if (!IsYugaByteEnabled())
+			{
+				/*
+				 * Not all index types support mark/restore.
+				 */
+				return castNode(IndexPath, pathnode)->indexinfo->amcanmarkpos;
+			}
+			else
+			{
+				/*
+				 * Yugabyte index scan do not support mark/restore, that would force
+				 * a Materialize plan node on top of the scan.
+				 * TODO Consider to support mark/restore. Though Materialize remote
+				 * index scan may be more efficient solution anyway.
+				 */
+				return false;
+			}
 
 		case T_Material:
 		case T_Sort:
@@ -566,6 +591,9 @@ ExecSupportsBackwardScan(Plan *node)
 		case T_CustomScan:
 			if (((CustomScan *) node)->flags & CUSTOMPATH_SUPPORT_BACKWARD_SCAN)
 				return true;
+			return false;
+
+		case T_YbSeqScan:
 			return false;
 
 		case T_SeqScan:

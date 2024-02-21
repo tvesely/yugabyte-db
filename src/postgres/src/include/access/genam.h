@@ -146,7 +146,14 @@ extern bool index_insert(Relation indexRelation,
 						 Relation heapRelation,
 						 IndexUniqueCheck checkUnique,
 						 bool indexUnchanged,
-						 struct IndexInfo *indexInfo);
+						 struct IndexInfo *indexInfo,
+						 bool yb_shared_insert);
+
+extern void yb_index_delete(Relation indexRelation,
+							Datum *values, bool *isnull,
+							Datum ybctid,
+							Relation heapRelation,
+							struct IndexInfo *indexInfo);
 
 extern IndexScanDesc index_beginscan(Relation heapRelation,
 									 Relation indexRelation,
@@ -194,6 +201,10 @@ extern void index_store_float8_orderby_distances(IndexScanDesc scan,
 extern bytea *index_opclass_options(Relation relation, AttrNumber attnum,
 									Datum attoptions, bool validate);
 
+
+extern bool yb_index_might_recheck(Relation heapRelation,
+								   Relation indexRelation, bool xs_want_itup,
+								   ScanKey keys, int nkeys);
 
 /*
  * index access method support routines (in genam.c)

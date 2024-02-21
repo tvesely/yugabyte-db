@@ -10,7 +10,22 @@
  * IDENTIFICATION
  *	  src/backend/utils/init/postinit.c
  *
+ * The following only applies to changes made to this file as part of
+ * YugaByte development.
  *
+ * Portions Copyright (c) YugaByte, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you
+ * may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+ * implied.  See the License for the specific language governing
+ * permissions and limitations under the License.
  *-------------------------------------------------------------------------
  */
 #include "postgres.h"
@@ -67,6 +82,16 @@
 #include "utils/syscache.h"
 #include "utils/timeout.h"
 
+/* Yugabyte includes */
+#include "pg_yb_utils.h"
+#include "catalog/pg_auth_members.h"
+#include "catalog/pg_yb_catalog_version.h"
+#include "catalog/pg_yb_profile.h"
+#include "catalog/pg_yb_role_profile.h"
+#include "catalog/pg_yb_tablegroup.h"
+#include "catalog/yb_catalog_version.h"
+#include "utils/yb_inheritscache.h"
+
 static HeapTuple GetDatabaseTuple(const char *dbname);
 static HeapTuple GetDatabaseTupleByOid(Oid dboid);
 static void PerformAuthentication(Port *port);
@@ -82,6 +107,14 @@ static bool ThereIsAtLeastOneRole(void);
 static void process_startup_options(Port *port, bool am_superuser);
 static void process_settings(Oid databaseid, Oid roleid);
 
+static void InitPostgresImpl(const char *in_dbname, Oid dboid,
+							 const char *username, Oid useroid,
+							 bool load_session_libraries,
+							 bool override_allow_connections,
+							 char *out_dbname,
+							 uint64_t *session_id,
+							 bool* yb_sys_table_prefetching_started);
+static void YbEnsureSysTablePrefetchingStopped();
 
 /*** InitPostgres support ***/
 
@@ -655,16 +688,51 @@ BaseInit(void)
  * We expect that InitProcess() was already called, so we already have a
  * PGPROC struct ... but it's not completely filled in yet.
  *
+ * YB extension: session_id. If greater than zero, connect local YbSession
+ * to existing YbClientSession instance in TServer, rather than requesting new.
+ * Helpful to initialize background worker backends that need to share state.
+ *
  * Note:
  *		Be very careful with the order of calls in the InitPostgres function.
  * --------------------------------
+ */
+/* YB_TODO(neil) Double check the merged in this file.
+ * Both Postgres and Yb refactor code, so merging mistakes are possible.
+ * NOTE: Latest change in master might not be merged. Check "YB::master" code again for new changes.
  */
 void
 InitPostgres(const char *in_dbname, Oid dboid,
 			 const char *username, Oid useroid,
 			 bool load_session_libraries,
 			 bool override_allow_connections,
-			 char *out_dbname)
+			 char *out_dbname,
+			 uint64_t *session_id)
+{
+	bool sys_table_prefetching_started = false;
+	PG_TRY();
+	{
+		InitPostgresImpl(
+			in_dbname, dboid, username, useroid, load_session_libraries,
+			override_allow_connections, out_dbname, session_id,
+			&sys_table_prefetching_started);
+	}
+	PG_CATCH();
+	{
+		YbEnsureSysTablePrefetchingStopped();
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
+	YbEnsureSysTablePrefetchingStopped();
+}
+
+static void
+InitPostgresImpl(const char *in_dbname, Oid dboid,
+				 const char *username, Oid useroid,
+				 bool load_session_libraries,
+				 bool override_allow_connections,
+				 char *out_dbname,
+				 uint64_t *session_id,
+				 bool* yb_sys_table_prefetching_started)
 {
 	bool		bootstrap = IsBootstrapProcessingMode();
 	bool		am_superuser;
@@ -713,6 +781,8 @@ InitPostgres(const char *in_dbname, Oid dboid,
 						IdleStatsUpdateTimeoutHandler);
 	}
 
+	MyProc->ybInitializationCompleted = true;
+
 	/*
 	 * If this is either a bootstrap process or a standalone backend, start up
 	 * the XLOG machinery, and register to have it closed down at exit. In
@@ -752,11 +822,58 @@ InitPostgres(const char *in_dbname, Oid dboid,
 	InitCatalogCache();
 	InitPlanCache();
 
+	if (YBIsEnabledInPostgresEnvVar())
+		YbInitPgInheritsCache();
+
 	/* Initialize portal manager */
 	EnablePortalManager();
 
 	/* Initialize status reporting */
 	pgstat_beinit();
+
+	/* Connect to YugaByte cluster. */
+	if (bootstrap)
+		YBInitPostgresBackend("postgres", "", username, session_id);
+	else
+		YBInitPostgresBackend("postgres", in_dbname, username, session_id);
+
+	if (IsYugaByteEnabled() && !bootstrap)
+	{
+		HandleYBStatus(YBCPgTableExists(Template1DbOid,
+										YbRoleProfileRelationId,
+										&YbLoginProfileCatalogsExist));
+
+		/* TODO (dmitry): Next call of the YBIsDBCatalogVersionMode function is
+		 * kind of a hack and must be removed. This function is called before
+		 * starting prefetching because for now switching into DB catalog
+		 * version mode is impossible in case prefething is started.
+		 */
+		YBIsDBCatalogVersionMode();
+		YBCPgResetCatalogReadTime();
+		YBCStartSysTablePrefetchingNoCache();
+		YbRegisterSysTableForPrefetching(AuthIdRelationId);   // pg_authid
+		YbRegisterSysTableForPrefetching(DatabaseRelationId); // pg_database
+
+		if (*YBCGetGFlags()->ysql_enable_profile && YbLoginProfileCatalogsExist)
+		{
+			YbRegisterSysTableForPrefetching(
+				YbProfileRelationId);     // pg_yb_profile
+			YbRegisterSysTableForPrefetching(
+				YbRoleProfileRelationId); // pg_yb_role_profile
+		}
+		YbTryRegisterCatalogVersionTableForPrefetching();
+
+		HandleYBStatus(YBCPrefetchRegisteredSysTables());
+		/*
+		 * If per database catalog version mode is enabled, this will load the
+		 * catalog version of template1. It is fine because at this time we
+		 * only read shared relations and therefore can use any database OID.
+		 * We will update yb_catalog_cache_version to match MyDatabaseId once
+		 * the latter is resolved so we will never use the catalog version of
+		 * template1 to query relations that are private to MyDatabaseId.
+		 */
+		YbUpdateCatalogCacheVersion(YbGetMasterCatalogVersion());
+	}
 
 	/*
 	 * Load relcache entries for the shared system catalogs.  This must create
@@ -856,6 +973,13 @@ InitPostgres(const char *in_dbname, Oid dboid,
 		PerformAuthentication(MyProcPort);
 		InitializeSessionUserId(username, useroid);
 		am_superuser = superuser();
+
+		/*
+		 * In YSQL upgrade mode (uses tserver auth method), we allow connecting to
+		 * databases with disabled connections (normally it's just template0).
+		 */
+		override_allow_connections = override_allow_connections ||
+									 MyProcPort->yb_is_tserver_auth_method;
 	}
 
 	/*
@@ -983,6 +1107,19 @@ InitPostgres(const char *in_dbname, Oid dboid,
 		return;
 	}
 
+	if (MyDatabaseId != Template1DbOid && YBIsDBCatalogVersionMode())
+	{
+		/*
+		 * Here we assume that the entire table pg_yb_catalog_version is
+		 * prefetched. Note that in this case YbGetMasterCatalogVersion()
+		 * returns the prefetched catalog version of MyDatabaseId which is
+		 * consistent with all the other tables that are prefetched.
+		 */
+		uint64_t master_catalog_version = YbGetMasterCatalogVersion();
+		Assert(master_catalog_version > YB_CATCACHE_VERSION_UNINITIALIZED);
+		YbUpdateCatalogCacheVersion(master_catalog_version);
+	}
+
 	/*
 	 * Now, take a writer's lock on the database we are trying to connect to.
 	 * If there is a concurrently running DROP DATABASE on that database, this
@@ -1029,13 +1166,16 @@ InitPostgres(const char *in_dbname, Oid dboid,
 	 * if the snapshot has been invalidated.  Assume it's no good anymore.
 	 */
 	InvalidateCatalogSnapshot();
+	if (IsYugaByteEnabled() && YBCIsSysTablePrefetchingStarted())
+		YBCStopSysTablePrefetching();
 
 	/*
 	 * Recheck pg_database to make sure the target database hasn't gone away.
 	 * If there was a concurrent DROP DATABASE, this ensures we will die
 	 * cleanly without creating a mess.
+	 * In YB mode DB existance is checked on cache load/refresh.
 	 */
-	if (!bootstrap)
+	if (!IsYugaByteEnabled() && !bootstrap)
 	{
 		HeapTuple	tuple;
 
@@ -1049,35 +1189,39 @@ InitPostgres(const char *in_dbname, Oid dboid,
 					 errdetail("It seems to have just been dropped or renamed.")));
 	}
 
-	/*
-	 * Now we should be able to access the database directory safely. Verify
-	 * it's there and looks reasonable.
-	 */
-	fullpath = GetDatabasePath(MyDatabaseId, MyDatabaseTableSpace);
-
-	if (!bootstrap)
+	/* No local physical path for the database in YugaByte mode */
+	if (!IsYugaByteEnabled())
 	{
-		if (access(fullpath, F_OK) == -1)
+		/*
+		 * Now we should be able to access the database directory safely. Verify
+		 * it's there and looks reasonable.
+		 */
+		fullpath = GetDatabasePath(MyDatabaseId, MyDatabaseTableSpace);
+
+		if (!bootstrap)
 		{
-			if (errno == ENOENT)
-				ereport(FATAL,
-						(errcode(ERRCODE_UNDEFINED_DATABASE),
-						 errmsg("database \"%s\" does not exist",
-								dbname),
-						 errdetail("The database subdirectory \"%s\" is missing.",
-								   fullpath)));
-			else
-				ereport(FATAL,
-						(errcode_for_file_access(),
-						 errmsg("could not access directory \"%s\": %m",
-								fullpath)));
+			if (access(fullpath, F_OK) == -1)
+			{
+				if (errno == ENOENT)
+					ereport(FATAL,
+							(errcode(ERRCODE_UNDEFINED_DATABASE),
+							 errmsg("database \"%s\" does not exist",
+									dbname),
+							 errdetail("The database subdirectory \"%s\" is missing.",
+									   fullpath)));
+				else
+					ereport(FATAL,
+							(errcode_for_file_access(),
+							 errmsg("could not access directory \"%s\": %m",
+									fullpath)));
+			}
+
+			ValidatePgVersion(fullpath);
 		}
 
-		ValidatePgVersion(fullpath);
+		SetDatabasePath(fullpath);
+		pfree(fullpath);
 	}
-
-	SetDatabasePath(fullpath);
-	pfree(fullpath);
 
 	/*
 	 * It's now possible to do real access to the system catalogs.
@@ -1085,7 +1229,20 @@ InitPostgres(const char *in_dbname, Oid dboid,
 	 * Load relcache entries for the system catalogs.  This must create at
 	 * least the minimum set of "nailed-in" cache entries.
 	 */
+	// See if tablegroup catalog exists - needs to happen before cache fully initialized.
+	if (IsYugaByteEnabled() && !bootstrap)
+		HandleYBStatus(YBCPgTableExists(
+			MyDatabaseId, YbTablegroupRelationId, &YbTablegroupCatalogExists));
+
 	RelationCacheInitializePhase3();
+
+	/*
+	 * Also cache whether the database is colocated for optimization purposes.
+	 */
+	if (IsYugaByteEnabled() && !IsBootstrapProcessingMode())
+	{
+		MyDatabaseColocated = YbIsDatabaseColocated(MyDatabaseId, &MyColocatedDatabaseLegacy);
+	}
 
 	/* set up ACL framework (so CheckMyDatabase can check permissions) */
 	initialize_acl();
@@ -1145,6 +1302,13 @@ InitPostgres(const char *in_dbname, Oid dboid,
 	/* close the transaction we started above */
 	if (!bootstrap)
 		CommitTransactionCommand();
+}
+
+static void
+YbEnsureSysTablePrefetchingStopped()
+{
+	if (IsYugaByteEnabled() && YBCIsSysTablePrefetchingStarted())
+		YBCStopSysTablePrefetching();
 }
 
 /*

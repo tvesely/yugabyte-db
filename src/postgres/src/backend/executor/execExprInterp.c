@@ -77,6 +77,9 @@
 #include "utils/typcache.h"
 #include "utils/xml.h"
 
+/* Yugabyte includes */
+#include "access/sysattr.h"
+
 /*
  * Use computed-goto-based opcode dispatch when computed gotos are available.
  * But use a separate symbol so that it's easy to adjust locally in this file
@@ -661,10 +664,18 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 			 * We do not need CheckVarSlotCompatibility here; that was taken
 			 * care of at compilation time.  But see EEOP_INNER_VAR comments.
 			 */
-			Assert(attnum >= 0 && attnum < scanslot->tts_nvalid);
-			Assert(resultnum >= 0 && resultnum < resultslot->tts_tupleDescriptor->natts);
-			resultslot->tts_values[resultnum] = scanslot->tts_values[attnum];
-			resultslot->tts_isnull[resultnum] = scanslot->tts_isnull[attnum];
+			/* Hacky way to allow YSQL upgrade INSERTs to set oid column. */
+			if (IsYsqlUpgrade && resultnum == ObjectIdAttributeNumber - 1)
+			{
+				resultslot->tts_yb_insert_oid = DatumGetObjectId(scanslot->tts_values[attnum]);
+			}
+			else
+			{
+				Assert(attnum >= 0 && attnum < scanslot->tts_nvalid);
+				Assert(resultnum >= 0 && resultnum < resultslot->tts_tupleDescriptor->natts);
+				resultslot->tts_values[resultnum] = scanslot->tts_values[attnum];
+				resultslot->tts_isnull[resultnum] = scanslot->tts_isnull[attnum];
+			}
 
 			EEO_NEXT();
 		}
@@ -673,9 +684,17 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		{
 			int			resultnum = op->d.assign_tmp.resultnum;
 
-			Assert(resultnum >= 0 && resultnum < resultslot->tts_tupleDescriptor->natts);
-			resultslot->tts_values[resultnum] = state->resvalue;
-			resultslot->tts_isnull[resultnum] = state->resnull;
+			/* Hacky way to allow YSQL upgrade INSERTs to set oid column. */
+			if (IsYsqlUpgrade && resultnum == ObjectIdAttributeNumber - 1)
+			{
+				resultslot->tts_yb_insert_oid = DatumGetObjectId(state->resvalue);
+			}
+			else
+			{
+				Assert(resultnum >= 0 && resultnum < resultslot->tts_tupleDescriptor->natts);
+				resultslot->tts_values[resultnum] = state->resvalue;
+				resultslot->tts_isnull[resultnum] = state->resnull;
+			}
 
 			EEO_NEXT();
 		}
@@ -3565,7 +3584,7 @@ ExecEvalHashedScalarArrayOp(ExprState *state, ExprEvalStep *op, ExprContext *eco
 		 * If the array happens to contain many duplicate values then it'll
 		 * just mean that we sized the table a bit on the large side.
 		 */
-		elements_tab->hashtab = saophash_create(CurrentMemoryContext, nitems,
+		elements_tab->hashtab = saophash_create(GetCurrentMemoryContext(), nitems,
 												elements_tab);
 
 		MemoryContextSwitchTo(oldcontext);
@@ -4255,7 +4274,7 @@ ExecAggTransReparent(AggState *aggstate, AggStatePerTrans pertrans,
 		if (DatumIsReadWriteExpandedObject(newValue,
 										   false,
 										   pertrans->transtypeLen) &&
-			MemoryContextGetParent(DatumGetEOHP(newValue)->eoh_context) == CurrentMemoryContext)
+			MemoryContextGetParent(DatumGetEOHP(newValue)->eoh_context) == GetCurrentMemoryContext())
 			 /* do nothing */ ;
 		else
 			newValue = datumCopy(newValue,

@@ -41,6 +41,7 @@
 #include "commands/progress.h"
 #include "commands/tablecmds.h"
 #include "commands/vacuum.h"
+#include "commands/ybccmds.h"
 #include "miscadmin.h"
 #include "optimizer/optimizer.h"
 #include "pgstat.h"
@@ -57,6 +58,10 @@
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "utils/tuplesort.h"
+
+/* Yugabyte includes */
+#include "nodes/makefuncs.h"
+#include "optimizer/planner.h"
 
 /*
  * This struct is used to pass around the information on tables to be
@@ -475,7 +480,6 @@ cluster_rel(Oid tableOid, Oid indexOid, ClusterParams *params)
 	rebuild_relation(OldHeap, indexOid, verbose);
 
 	/* NB: rebuild_relation does table_close() on OldHeap */
-
 out:
 	/* Roll back any GUC changes executed by index functions */
 	AtEOXact_GUC(false, save_nestlevel);
@@ -739,6 +743,7 @@ make_new_heap(Oid OIDOldHeap, Oid NewTableSpace, Oid NewAccessMethod,
 	OIDNewHeap = heap_create_with_catalog(NewHeapName,
 										  namespaceid,
 										  NewTableSpace,
+										  InvalidOid, /* reltablegroup */
 										  InvalidOid,
 										  InvalidOid,
 										  InvalidOid,
@@ -756,8 +761,25 @@ make_new_heap(Oid OIDOldHeap, Oid NewTableSpace, Oid NewAccessMethod,
 										  true,
 										  true,
 										  OIDOldHeap,
-										  NULL);
+										  NULL,
+										  false);
 	Assert(OIDNewHeap != InvalidOid);
+
+	if (IsYugaByteEnabled() && relpersistence != RELPERSISTENCE_TEMP)
+	{
+		CreateStmt *dummyStmt = makeNode(CreateStmt);
+		dummyStmt->relation   = makeRangeVar(NULL, NewHeapName, -1);
+		char relkind          = RELKIND_RELATION;
+		Oid matviewPgTableId  = InvalidOid;
+
+		if (OldHeap->rd_rel->relkind == RELKIND_MATVIEW) {
+			relkind = RELKIND_MATVIEW;
+			matviewPgTableId = OIDOldHeap;
+		}
+
+		YBCCreateTable(dummyStmt, relkind, OldHeapDesc, OIDNewHeap, namespaceid,
+					   InvalidOid, InvalidOid, NewTableSpace, matviewPgTableId);
+	}
 
 	ReleaseSysCache(tuple);
 
@@ -1105,6 +1127,19 @@ swap_relation_files(Oid r1, Oid r2, bool target_is_pg_class,
 		swptmpchr = relform1->relpersistence;
 		relform1->relpersistence = relform2->relpersistence;
 		relform2->relpersistence = swptmpchr;
+
+		if (IsYugaByteEnabled())
+		{
+			/*
+			 * If this swap is happening during a REFRESH MATVIEW,
+			 * correctly mark the transient relation as a MATVIEW
+			 * so that it is dropped in YB mode.
+			 */
+			if (relform1->relkind == RELKIND_MATVIEW)
+				relform2->relkind = RELKIND_MATVIEW;
+			else if (relform2->relkind == RELKIND_MATVIEW)
+				relform1->relkind = RELKIND_MATVIEW;
+		}
 
 		/* Also swap toast links, if we're swapping by links */
 		if (!swap_toast_by_content)

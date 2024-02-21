@@ -931,7 +931,7 @@ parseqatom(struct vars *v,
 			/* legal in EREs due to specification botch */
 			NOTE(REG_UPBOTCH);
 			/* fall through into case PLAIN */
-			/* FALLTHROUGH */
+			switch_fallthrough();
 		case PLAIN:
 			onechr(v, v->nextvalue, lp, rp);
 			okcolors(v->nfa, v->cm);

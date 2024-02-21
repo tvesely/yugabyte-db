@@ -36,10 +36,10 @@ ginbeginscan(Relation rel, int nkeys, int norderbys)
 	so = (GinScanOpaque) palloc(sizeof(GinScanOpaqueData));
 	so->keys = NULL;
 	so->nkeys = 0;
-	so->tempCtx = AllocSetContextCreate(CurrentMemoryContext,
+	so->tempCtx = AllocSetContextCreate(GetCurrentMemoryContext(),
 										"Gin scan temporary context",
 										ALLOCSET_DEFAULT_SIZES);
-	so->keyCtx = AllocSetContextCreate(CurrentMemoryContext,
+	so->keyCtx = AllocSetContextCreate(GetCurrentMemoryContext(),
 									   "Gin scan key context",
 									   ALLOCSET_DEFAULT_SIZES);
 	initGinState(&so->ginstate, scan->indexRelation);
@@ -419,8 +419,11 @@ ginNewScanKey(IndexScanDesc scan)
 	 * If the index is version 0, it may be missing null and placeholder
 	 * entries, which would render searches for nulls and full-index scans
 	 * unreliable.  Throw an error if so.
+	 *
+	 * This doesn't apply to Yugabyte-backed indexes.
 	 */
-	if (hasNullQuery && !so->isVoidRes)
+	if (hasNullQuery && !so->isVoidRes
+		&& !IsYBBackedRelation(scan->indexRelation))
 	{
 		GinStatsData ginStats;
 

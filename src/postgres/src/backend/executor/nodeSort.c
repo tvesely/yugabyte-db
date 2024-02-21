@@ -21,6 +21,9 @@
 #include "miscadmin.h"
 #include "utils/tuplesort.h"
 
+/* YB includes. */
+#include "pg_yb_utils.h"
+
 
 /* ----------------------------------------------------------------
  *		ExecSort
@@ -87,6 +90,15 @@ ExecSort(PlanState *pstate)
 		 * sorted data.
 		 */
 		estate->es_direction = ForwardScanDirection;
+
+		/*
+		 * Use default prefetch limit when ORDER BY is present.
+		 * YugaByte doesn't sort the row, but Postgres layer does. YB has to do full scan and let
+		 * Postgres engine sort and limit the rows.
+		 */
+		if (IsYugaByteEnabled()) {
+			estate->yb_exec_params.limit_use_default = true;
+		}
 
 		/*
 		 * Initialize tuplesort module.

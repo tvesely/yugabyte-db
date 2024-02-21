@@ -51,6 +51,17 @@
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
+#include "yb/yql/pggate/util/ybc_util.h"
+
+#include "pg_yb_utils.h"
+
+typedef struct
+{
+	int			nargs;			/* number of arguments */
+	Oid		   *types;			/* types of arguments */
+	Datum	   *values;			/* evaluated argument values */
+	char	   *nulls;			/* null markers (' '/'n' style) */
+} PreparedParamsData;
 
 /*
  * All plpgsql function executions within a single transaction share the same
@@ -111,7 +122,7 @@ static ResourceOwner shared_simple_eval_resowner = NULL;
  *
  * 1. Function-call-lifespan data, such as variable values, is kept in the
  * "main" context, a/k/a the "SPI Proc" context established by SPI_connect().
- * This is usually the CurrentMemoryContext while running code in this module
+ * This is usually the GetCurrentMemoryContext() while running code in this module
  * (which is not good, because careless coding can easily cause
  * function-lifespan memory leaks, but we live with it for now).
  *
@@ -1744,7 +1755,7 @@ exec_stmt_block(PLpgSQL_execstate *estate, PLpgSQL_stmt_block *block)
 		/*
 		 * Execute the statements in the block's body inside a sub-transaction
 		 */
-		MemoryContext oldcontext = CurrentMemoryContext;
+		MemoryContext oldcontext = GetCurrentMemoryContext();
 		ResourceOwner oldowner = CurrentResourceOwner;
 		ExprContext *old_eval_econtext = estate->eval_econtext;
 		ErrorData  *save_cur_error = estate->cur_error;
@@ -1990,6 +2001,25 @@ exec_stmts(PLpgSQL_execstate *estate, List *stmts)
 	{
 		PLpgSQL_stmt *stmt = (PLpgSQL_stmt *) lfirst(s);
 		int			rc;
+
+		/*
+		 * Flush buffered operations before executing a new statement since it might
+		 * have non-transactional side-effects that won't be reverted in case the
+		 * buffered operations (i.e., from previous statements) lead to an
+		 * exception.
+		 */
+		if (stmt->cmd_type != PLPGSQL_STMT_EXECSQL)
+		{
+			/*
+			 * PLPGSQL_STMT_EXECSQL commands require flushing for everything except
+			 * UPDATE, INSERT and DELETE. So the handling for that is present in
+			 * exec_stmt_execsql().
+			 *
+			 * The reason for not flushing in case of UPDATE, INSERT and DELETE is
+			 * mentioned in exec_stmt_execsql() which handles PLPGSQL_STMT_EXECSQL.
+			 */
+			YBFlushBufferedOperations();
+		}
 
 		estate->err_stmt = stmt;
 
@@ -2279,6 +2309,10 @@ make_callstmt_target(PLpgSQL_execstate *estate, PLpgSQL_expr *expr)
 	int			nfields;
 	int			i;
 
+	/* YB_TODO(zihong@yugabyte)
+	 * - Need to verify if this needs to be changed as in Pg11.
+	 * - Unlike Pg11, Pg13 doesn't call get_stmt_mcontext() on this call which was backported.
+	 */
 	/* Use eval_mcontext for any cruft accumulated here */
 	oldcontext = MemoryContextSwitchTo(get_eval_mcontext(estate));
 
@@ -2819,7 +2853,9 @@ exec_stmt_fors(PLpgSQL_execstate *estate, PLpgSQL_stmt_fors *stmt)
 	/*
 	 * Execute the loop
 	 */
-	rc = exec_for_query(estate, (PLpgSQL_stmt_forq *) stmt, portal, true);
+	rc = exec_for_query(
+			estate, (PLpgSQL_stmt_forq *) stmt, portal,
+			!yb_plpgsql_disable_prefetch_in_for_query);
 
 	/*
 	 * Close the implicit cursor
@@ -3201,7 +3237,7 @@ exec_stmt_return(PLpgSQL_execstate *estate, PLpgSQL_stmt_return *stmt)
 				/* fulfill promise if needed, then handle like regular var */
 				plpgsql_fulfill_promise(estate, (PLpgSQL_var *) retvar);
 
-				/* FALL THRU */
+				switch_fallthrough();
 
 			case PLPGSQL_DTYPE_VAR:
 				{
@@ -3347,7 +3383,7 @@ exec_stmt_return_next(PLpgSQL_execstate *estate,
 				/* fulfill promise if needed, then handle like regular var */
 				plpgsql_fulfill_promise(estate, (PLpgSQL_var *) retvar);
 
-				/* FALL THRU */
+				switch_fallthrough();
 
 			case PLPGSQL_DTYPE_VAR:
 				{
@@ -4007,7 +4043,7 @@ plpgsql_estate_setup(PLpgSQL_execstate *estate,
 	estate->ndatums = func->ndatums;
 	estate->datums = NULL;
 	/* the datums array will be filled by copy_plpgsql_datums() */
-	estate->datum_context = CurrentMemoryContext;
+	estate->datum_context = GetCurrentMemoryContext();
 
 	/* initialize our ParamListInfo with appropriate hook functions */
 	estate->paramLI = makeParamList(0);
@@ -4026,12 +4062,12 @@ plpgsql_estate_setup(PLpgSQL_execstate *estate,
 		/* Private cast hash just lives in function's main context */
 		ctl.keysize = sizeof(plpgsql_CastHashKey);
 		ctl.entrysize = sizeof(plpgsql_CastHashEntry);
-		ctl.hcxt = CurrentMemoryContext;
+		ctl.hcxt = GetCurrentMemoryContext();
 		estate->cast_hash = hash_create("PLpgSQL private cast cache",
 										16, /* start small and extend */
 										&ctl,
 										HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
-		estate->cast_hash_context = CurrentMemoryContext;
+		estate->cast_hash_context = GetCurrentMemoryContext();
 	}
 	else
 	{
@@ -4068,7 +4104,7 @@ plpgsql_estate_setup(PLpgSQL_execstate *estate,
 	 * context.  Additional stmt_mcontexts might be created as children of it.
 	 */
 	estate->stmt_mcontext = NULL;
-	estate->stmt_mcontext_parent = CurrentMemoryContext;
+	estate->stmt_mcontext_parent = GetCurrentMemoryContext();
 
 	estate->eval_tuptable = NULL;
 	estate->eval_processed = 0;
@@ -4237,6 +4273,20 @@ exec_stmt_execsql(PLpgSQL_execstate *estate,
 		}
 		stmt->mod_stmt_set = true;
 	}
+
+	/*
+	 * Flush buffered operations before executing a new statement since it might
+	 * have non-transactional side-effects that won't be reverted in case the
+	 * buffered operations (i.e., from previous statements) lead to an exception.
+	 *
+	 * If we know that the new statement is an INSERT, UPDATE or DELETE, we
+	 * can skip flushing since these statements have only transactional
+	 * effects. And an exception that occurs later due to previously buffered
+	 * operations (i.e., from previous statements) will lead to reverting
+	 * of the transactional effects of the new statement too.
+	 */
+	if (!stmt->mod_stmt)
+		YBFlushBufferedOperations();
 
 	/*
 	 * Set up ParamListInfo to pass to executor
@@ -5296,7 +5346,7 @@ exec_eval_datum(PLpgSQL_execstate *estate,
 			/* fulfill promise if needed, then handle like regular var */
 			plpgsql_fulfill_promise(estate, (PLpgSQL_var *) datum);
 
-			/* FALL THRU */
+			switch_fallthrough();
 
 		case PLPGSQL_DTYPE_VAR:
 			{

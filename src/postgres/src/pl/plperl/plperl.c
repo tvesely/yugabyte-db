@@ -124,6 +124,7 @@ typedef struct plperl_proc_desc
 	FmgrInfo   *arg_out_func;	/* output fns for arg types */
 	bool	   *arg_is_rowtype; /* is each arg composite? */
 	Oid		   *arg_arraytype;	/* InvalidOid if not an array */
+	uint64 yb_catalog_version; /* catalog version at function load time */
 } plperl_proc_desc;
 
 #define increment_prodesc_refcount(prodesc)  \
@@ -1231,7 +1232,7 @@ array_to_datum_internal(AV *av, ArrayBuildState *astate,
 									 &isnull);
 
 			(void) accumArrayResult(astate, dat, isnull,
-									elemtypid, CurrentMemoryContext);
+									elemtypid, GetCurrentMemoryContext());
 		}
 	}
 }
@@ -1259,7 +1260,7 @@ plperl_array_to_datum(SV *src, Oid typid, int32 typmod)
 				 errmsg("cannot convert Perl array to non-array type %s",
 						format_type_be(typid))));
 
-	astate = initArrayResult(elemtypid, CurrentMemoryContext, true);
+	astate = initArrayResult(elemtypid, GetCurrentMemoryContext(), true);
 
 	_sv_to_datum_finfo(elemtypid, &finfo, &typioparam);
 
@@ -1279,7 +1280,7 @@ plperl_array_to_datum(SV *src, Oid typid, int32 typmod)
 		lbs[i] = 1;
 
 	return makeMdArrayResult(astate, ndims, dims, lbs,
-							 CurrentMemoryContext, true);
+							 GetCurrentMemoryContext(), true);
 }
 
 /* Get the information needed to convert data to the specified PG type */
@@ -1851,7 +1852,7 @@ plperl_call_handler(PG_FUNCTION_ARGS)
 	{
 		current_call_data = &this_call_data;
 		if (CALLED_AS_TRIGGER(fcinfo))
-			retval = PointerGetDatum(plperl_trigger_handler(fcinfo));
+			retval = plperl_trigger_handler(fcinfo);
 		else if (CALLED_AS_EVENT_TRIGGER(fcinfo))
 		{
 			plperl_event_trigger_handler(fcinfo);
@@ -1908,7 +1909,7 @@ plperl_inline_handler(PG_FUNCTION_ARGS)
 	MemSet(&desc, 0, sizeof(desc));
 	fake_fcinfo->flinfo = &flinfo;
 	flinfo.fn_oid = InvalidOid;
-	flinfo.fn_mcxt = CurrentMemoryContext;
+	flinfo.fn_mcxt = GetCurrentMemoryContext();
 
 	desc.proname = "inline_code_block";
 	desc.fn_readonly = false;
@@ -2667,7 +2668,8 @@ validate_plperl_function(plperl_proc_ptr *proc_ptr, HeapTuple procTup)
 		 * This is needed because CREATE OR REPLACE FUNCTION can modify the
 		 * function's pg_proc entry without changing its OID.
 		 ************************************************************/
-		uptodate = (prodesc->fn_xmin == HeapTupleHeaderGetRawXmin(procTup->t_data) &&
+		uptodate = (IsYugabyteEnabled() ? procdesc->yb_catalog_version == YBGetActiveCatalogCacheVersion() :
+					prodesc->fn_xmin == HeapTupleHeaderGetRawXmin(procTup->t_data) &&
 					ItemPointerEquals(&prodesc->fn_tid, &procTup->t_self));
 
 		if (uptodate)
@@ -2797,6 +2799,7 @@ compile_plperl_function(Oid fn_oid, bool is_trigger, bool is_event_trigger)
 		prodesc->arg_out_func = (FmgrInfo *) palloc0(prodesc->nargs * sizeof(FmgrInfo));
 		prodesc->arg_is_rowtype = (bool *) palloc0(prodesc->nargs * sizeof(bool));
 		prodesc->arg_arraytype = (Oid *) palloc0(prodesc->nargs * sizeof(Oid));
+		prodesc->yb_catalog_version = YBGetActiveCatalogCacheVersion();
 		MemoryContextSwitchTo(oldcontext);
 
 		/* Remember if function is STABLE/IMMUTABLE */
@@ -3127,7 +3130,7 @@ plperl_spi_exec(char *query, int limit)
 	 * Execute the query inside a sub-transaction, so we can cope with errors
 	 * sanely
 	 */
-	MemoryContext oldcontext = CurrentMemoryContext;
+	MemoryContext oldcontext = GetCurrentMemoryContext();
 	ResourceOwner oldowner = CurrentResourceOwner;
 
 	check_spi_usage_allowed();
@@ -3233,7 +3236,7 @@ plperl_spi_execute_fetch_result(SPITupleTable *tuptable, uint64 processed,
 void
 plperl_return_next(SV *sv)
 {
-	MemoryContext oldcontext = CurrentMemoryContext;
+	MemoryContext oldcontext = GetCurrentMemoryContext();
 
 	check_spi_usage_allowed();
 
@@ -3338,7 +3341,7 @@ plperl_return_next_internal(SV *sv)
 	if (!current_call_data->tmp_cxt)
 	{
 		current_call_data->tmp_cxt =
-			AllocSetContextCreate(CurrentMemoryContext,
+			AllocSetContextCreate(GetCurrentMemoryContext(),
 								  "PL/Perl return_next temporary cxt",
 								  ALLOCSET_DEFAULT_SIZES);
 	}
@@ -3398,7 +3401,7 @@ plperl_spi_query(char *query)
 	 * Execute the query inside a sub-transaction, so we can cope with errors
 	 * sanely
 	 */
-	MemoryContext oldcontext = CurrentMemoryContext;
+	MemoryContext oldcontext = GetCurrentMemoryContext();
 	ResourceOwner oldowner = CurrentResourceOwner;
 
 	check_spi_usage_allowed();
@@ -3470,7 +3473,7 @@ plperl_spi_fetchrow(char *cursor)
 	 * Execute the FETCH inside a sub-transaction, so we can cope with errors
 	 * sanely
 	 */
-	MemoryContext oldcontext = CurrentMemoryContext;
+	MemoryContext oldcontext = GetCurrentMemoryContext();
 	ResourceOwner oldowner = CurrentResourceOwner;
 
 	check_spi_usage_allowed();
@@ -3559,7 +3562,7 @@ plperl_spi_prepare(char *query, int argc, SV **argv)
 	volatile MemoryContext plan_cxt = NULL;
 	plperl_query_desc *volatile qdesc = NULL;
 	plperl_query_entry *volatile hash_entry = NULL;
-	MemoryContext oldcontext = CurrentMemoryContext;
+	MemoryContext oldcontext = GetCurrentMemoryContext();
 	ResourceOwner oldowner = CurrentResourceOwner;
 	MemoryContext work_cxt;
 	bool		found;
@@ -3597,7 +3600,7 @@ plperl_spi_prepare(char *query, int argc, SV **argv)
 		 * Do the following work in a short-lived context so that we don't
 		 * leak a lot of memory in the PL/Perl function's SPI Proc context.
 		 ************************************************************/
-		work_cxt = AllocSetContextCreate(CurrentMemoryContext,
+		work_cxt = AllocSetContextCreate(GetCurrentMemoryContext(),
 										 "PL/Perl spi_prepare workspace",
 										 ALLOCSET_DEFAULT_SIZES);
 		MemoryContextSwitchTo(work_cxt);
@@ -3717,7 +3720,7 @@ plperl_spi_exec_prepared(char *query, HV *attr, int argc, SV **argv)
 	 * Execute the query inside a sub-transaction, so we can cope with errors
 	 * sanely
 	 */
-	MemoryContext oldcontext = CurrentMemoryContext;
+	MemoryContext oldcontext = GetCurrentMemoryContext();
 	ResourceOwner oldowner = CurrentResourceOwner;
 
 	check_spi_usage_allowed();
@@ -3842,7 +3845,7 @@ plperl_spi_query_prepared(char *query, int argc, SV **argv)
 	 * Execute the query inside a sub-transaction, so we can cope with errors
 	 * sanely
 	 */
-	MemoryContext oldcontext = CurrentMemoryContext;
+	MemoryContext oldcontext = GetCurrentMemoryContext();
 	ResourceOwner oldowner = CurrentResourceOwner;
 
 	check_spi_usage_allowed();
@@ -3979,7 +3982,7 @@ plperl_spi_freeplan(char *query)
 void
 plperl_spi_commit(void)
 {
-	MemoryContext oldcontext = CurrentMemoryContext;
+	MemoryContext oldcontext = GetCurrentMemoryContext();
 
 	check_spi_usage_allowed();
 
@@ -4005,7 +4008,7 @@ plperl_spi_commit(void)
 void
 plperl_spi_rollback(void)
 {
-	MemoryContext oldcontext = CurrentMemoryContext;
+	MemoryContext oldcontext = GetCurrentMemoryContext();
 
 	check_spi_usage_allowed();
 
@@ -4042,7 +4045,7 @@ plperl_spi_rollback(void)
 void
 plperl_util_elog(int level, SV *msg)
 {
-	MemoryContext oldcontext = CurrentMemoryContext;
+	MemoryContext oldcontext = GetCurrentMemoryContext();
 	char	   *volatile cmsg = NULL;
 
 	/*

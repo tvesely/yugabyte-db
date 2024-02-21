@@ -69,6 +69,11 @@
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
 
+/* YB includes. */
+#include "pg_yb_utils.h"
+#include "access/sysattr.h"
+#include "miscadmin.h"
+
 static TupleDesc ExecTypeFromTLInternal(List *targetList,
 										bool skipjunk);
 static pg_attribute_always_inline void slot_deform_heap_tuple(TupleTableSlot *slot, HeapTuple tuple, uint32 *offp,
@@ -1137,7 +1142,7 @@ MakeTupleTableSlot(TupleDesc tupleDesc,
 	if (tupleDesc != NULL)
 		slot->tts_flags |= TTS_FLAG_FIXED;
 	slot->tts_tupleDescriptor = tupleDesc;
-	slot->tts_mcxt = CurrentMemoryContext;
+	slot->tts_mcxt = GetCurrentMemoryContext();
 	slot->tts_nvalid = 0;
 
 	if (tupleDesc != NULL)
@@ -1425,7 +1430,9 @@ ExecStorePinnedBufferHeapTuple(HeapTuple tuple,
 	Assert(tuple != NULL);
 	Assert(slot != NULL);
 	Assert(slot->tts_tupleDescriptor != NULL);
-	Assert(BufferIsValid(buffer));
+
+	if (!IsYugaByteEnabled())
+		Assert(BufferIsValid(buffer));
 
 	if (unlikely(!TTS_IS_BUFFERTUPLE(slot)))
 		elog(ERROR, "trying to store an on-disk heap tuple into wrong type of slot");
@@ -1964,6 +1971,23 @@ ExecTypeFromTLInternal(List *targetList, bool skipjunk)
 		len = ExecCleanTargetListLength(targetList);
 	else
 		len = ExecTargetListLength(targetList);
+
+	/*
+	 * In YSQL upgrade mode, targetList might be prefixed with OID during INSERT.
+	 * System columns don't count toward nattrs.
+	 */
+	if (IsYsqlUpgrade)
+	{
+		foreach(l, targetList)
+		{
+			TargetEntry *tle = lfirst(l);
+			if (tle->resno < 1)
+				len--;
+			else
+				break;
+		}
+	}
+
 	typeInfo = CreateTemplateTupleDesc(len);
 
 	foreach(l, targetList)
@@ -1972,6 +1996,11 @@ ExecTypeFromTLInternal(List *targetList, bool skipjunk)
 
 		if (skipjunk && tle->resjunk)
 			continue;
+
+		/* System columns shouldn't be processed here. */
+		if (IsYsqlUpgrade && tle->resno == ObjectIdAttributeNumber)
+			continue;
+
 		TupleDescInitEntry(typeInfo,
 						   cur_resno,
 						   tle->resname,

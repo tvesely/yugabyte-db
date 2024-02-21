@@ -5008,7 +5008,7 @@ split_text_accum_result(SplitTextOutputData *tstate,
 										  PointerGetDatum(field_value),
 										  is_null,
 										  TEXTOID,
-										  CurrentMemoryContext);
+										  GetCurrentMemoryContext());
 	}
 }
 

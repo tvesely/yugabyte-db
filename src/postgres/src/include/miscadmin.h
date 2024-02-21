@@ -28,6 +28,8 @@
 #include "datatype/timestamp.h" /* for TimestampTz */
 #include "pgtime.h"				/* for pg_time_t */
 
+#include "postgres.h"			/* for HeapTuple */
+#include "access/htup.h"		/* for HeapTuple */
 
 #define InvalidPid				(-1)
 
@@ -167,6 +169,8 @@ extern PGDLLIMPORT bool IsUnderPostmaster;
 extern PGDLLIMPORT bool IsBackgroundWorker;
 extern PGDLLIMPORT bool IsBinaryUpgrade;
 
+extern bool IsYsqlUpgrade;
+
 extern PGDLLIMPORT bool ExitOnAnyError;
 
 extern PGDLLIMPORT char *DataDir;
@@ -202,6 +206,16 @@ extern PGDLLIMPORT char postgres_exec_path[];
 extern PGDLLIMPORT Oid MyDatabaseId;
 
 extern PGDLLIMPORT Oid MyDatabaseTableSpace;
+
+extern PGDLLIMPORT bool MyDatabaseColocated;
+
+extern PGDLLIMPORT Oid YbDatabaseIdForNewObjectId;
+
+extern PGDLLIMPORT bool MyColocatedDatabaseLegacy;
+
+extern PGDLLIMPORT bool YbTablegroupCatalogExists;
+
+extern PGDLLIMPORT bool YbLoginProfileCatalogsExist;
 
 /*
  * Date/Time Configuration
@@ -461,7 +475,8 @@ extern void InitPostgres(const char *in_dbname, Oid dboid,
 						 const char *username, Oid useroid,
 						 bool load_session_libraries,
 						 bool override_allow_connections,
-						 char *out_dbname);
+						 char *out_dbname,
+						 uint64_t *session_id);
 extern void BaseInit(void);
 
 /* in utils/init/miscinit.c */

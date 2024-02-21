@@ -67,6 +67,9 @@
 #include "utils/ruleutils.h"
 #include "utils/snapmgr.h"
 
+/* Yugabyte includes */
+#include "pg_yb_utils.h"
+#include "commands/extension.h"
 
 /* Hooks for plugins to get control in ExecutorStart/Run/Finish/End */
 ExecutorStart_hook_type ExecutorStart_hook = NULL;
@@ -95,13 +98,12 @@ static bool ExecCheckRTEPermsModified(Oid relOid, Oid userid,
 									  Bitmapset *modifiedCols,
 									  AclMode requiredPerms);
 static void ExecCheckXactReadOnly(PlannedStmt *plannedstmt);
-static char *ExecBuildSlotValueDescription(Oid reloid,
+static char *ExecBuildSlotValueDescription(Relation rel,
 										   TupleTableSlot *slot,
 										   TupleDesc tupdesc,
 										   Bitmapset *modifiedCols,
 										   int maxfieldlen);
 static void EvalPlanQualStart(EPQState *epqstate, Plan *planTree);
-
 /* end of local decls */
 
 
@@ -118,7 +120,7 @@ static void EvalPlanQualStart(EPQState *epqstate, Plan *planTree);
  *
  * eflags contains flag bits as described in executor.h.
  *
- * NB: the CurrentMemoryContext when this is called will become the parent
+ * NB: the GetCurrentMemoryContext() when this is called will become the parent
  * of the per-query context used for this Executor invocation.
  *
  * We provide a function hook variable that lets loadable plugins
@@ -211,7 +213,6 @@ standard_ExecutorStart(QueryDesc *queryDesc, int eflags)
 	switch (queryDesc->operation)
 	{
 		case CMD_SELECT:
-
 			/*
 			 * SELECT FOR [KEY] UPDATE/SHARE and modifying CTEs need to mark
 			 * tuples
@@ -325,6 +326,9 @@ standard_ExecutorRun(QueryDesc *queryDesc,
 	Assert(estate != NULL);
 	Assert(!(estate->es_top_eflags & EXEC_FLAG_EXPLAIN_ONLY));
 
+	if (IsYugaByteEnabled())
+		YBBeginOperationsBuffering();
+
 	/*
 	 * Switch into per-query memory context
 	 */
@@ -437,6 +441,10 @@ standard_ExecutorFinish(QueryDesc *queryDesc)
 	if (!(estate->es_top_eflags & EXEC_FLAG_SKIP_TRIGGERS))
 		AfterTriggerEndQuery(estate);
 
+	// Flush buffered operations straight before elapsed time calculation.
+	if (IsYugaByteEnabled())
+		YBEndOperationsBuffering();
+
 	if (queryDesc->totaltime)
 		InstrStopNode(queryDesc->totaltime, 0);
 
@@ -514,6 +522,7 @@ standard_ExecutorEnd(QueryDesc *queryDesc)
 	queryDesc->estate = NULL;
 	queryDesc->planstate = NULL;
 	queryDesc->totaltime = NULL;
+	queryDesc->yb_query_stats = NULL;
 }
 
 /* ----------------------------------------------------------------
@@ -674,8 +683,8 @@ ExecCheckRTEPerms(RangeTblEntry *rte)
 
 			while ((col = bms_next_member(rte->selectedCols, col)) >= 0)
 			{
-				/* bit #s are offset by FirstLowInvalidHeapAttributeNumber */
-				AttrNumber	attno = col + FirstLowInvalidHeapAttributeNumber;
+				/* Add appropriate offset to get attribute # from column # */
+				AttrNumber attno = col + YBGetFirstLowInvalidAttributeNumberFromOid(relOid);
 
 				if (attno == InvalidAttrNumber)
 				{
@@ -737,8 +746,8 @@ ExecCheckRTEPermsModified(Oid relOid, Oid userid, Bitmapset *modifiedCols,
 
 	while ((col = bms_next_member(modifiedCols, col)) >= 0)
 	{
-		/* bit #s are offset by FirstLowInvalidHeapAttributeNumber */
-		AttrNumber	attno = col + FirstLowInvalidHeapAttributeNumber;
+		/* Add appropriate offset to get attribute # from column # */
+		AttrNumber attno = col + YBGetFirstLowInvalidAttributeNumberFromOid(relOid);
 
 		if (attno == InvalidAttrNumber)
 		{
@@ -817,7 +826,10 @@ InitPlan(QueryDesc *queryDesc, int eflags)
 	/*
 	 * Do permissions checks
 	 */
-	ExecCheckRTPerms(rangeTable, true);
+	if (!(IsYbExtensionUser(GetUserId()) && creating_extension))
+	{
+		ExecCheckRTPerms(rangeTable, true);
+	}
 
 	/*
 	 * initialize the node's execution state
@@ -929,6 +941,8 @@ InitPlan(QueryDesc *queryDesc, int eflags)
 
 		i++;
 	}
+
+	queryDesc->yb_query_stats = InstrAlloc(1, queryDesc->instrument_options, false);
 
 	/*
 	 * Initialize the private state information for all the nodes in the query
@@ -1836,7 +1850,7 @@ ExecPartitionCheckEmitError(ResultRelInfo *resultRelInfo,
 							TupleTableSlot *slot,
 							EState *estate)
 {
-	Oid			root_relid;
+	Relation	rel;
 	TupleDesc	tupdesc;
 	char	   *val_desc;
 	Bitmapset  *modifiedCols;
@@ -1853,7 +1867,7 @@ ExecPartitionCheckEmitError(ResultRelInfo *resultRelInfo,
 		TupleDesc	old_tupdesc;
 		AttrMap    *map;
 
-		root_relid = RelationGetRelid(rootrel->ri_RelationDesc);
+		rel = rootrel->ri_RelationDesc;
 		tupdesc = RelationGetDescr(rootrel->ri_RelationDesc);
 
 		old_tupdesc = RelationGetDescr(resultRelInfo->ri_RelationDesc);
@@ -1872,13 +1886,13 @@ ExecPartitionCheckEmitError(ResultRelInfo *resultRelInfo,
 	}
 	else
 	{
-		root_relid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
+		rel = resultRelInfo->ri_RelationDesc;
 		tupdesc = RelationGetDescr(resultRelInfo->ri_RelationDesc);
 		modifiedCols = bms_union(ExecGetInsertedCols(resultRelInfo, estate),
 								 ExecGetUpdatedCols(resultRelInfo, estate));
 	}
 
-	val_desc = ExecBuildSlotValueDescription(root_relid,
+	val_desc = ExecBuildSlotValueDescription(rel,
 											 slot,
 											 tupdesc,
 											 modifiedCols,
@@ -1904,13 +1918,14 @@ ExecPartitionCheckEmitError(ResultRelInfo *resultRelInfo,
  */
 void
 ExecConstraints(ResultRelInfo *resultRelInfo,
-				TupleTableSlot *slot, EState *estate)
+				TupleTableSlot *slot,
+				EState *estate,
+				ModifyTableState *mtstate)
 {
 	Relation	rel = resultRelInfo->ri_RelationDesc;
 	TupleDesc	tupdesc = RelationGetDescr(rel);
 	TupleConstr *constr = tupdesc->constr;
 	Bitmapset  *modifiedCols;
-
 	Assert(constr);				/* we should not be called otherwise */
 
 	if (constr->has_not_null)
@@ -1921,6 +1936,38 @@ ExecConstraints(ResultRelInfo *resultRelInfo,
 		for (attrChk = 1; attrChk <= natts; attrChk++)
 		{
 			Form_pg_attribute att = TupleDescAttr(tupdesc, attrChk - 1);
+
+			/*
+			 * Below we check if attribute belongs to the modified columns for
+			 * the NOT NULL constraint and if so, performs single-row updates.
+			 * Thus modified columns must be calculated beforehand.
+			 */
+			if (resultRelInfo->ri_RootResultRelInfo)
+			{
+				ResultRelInfo *rootrel = resultRelInfo->ri_RootResultRelInfo;
+				modifiedCols = bms_union(ExecGetInsertedCols(rootrel, estate),
+										 ExecGetUpdatedCols(rootrel, estate));
+			}
+			else
+			{
+				modifiedCols = bms_union(ExecGetInsertedCols(resultRelInfo, estate),
+										 ExecGetUpdatedCols(resultRelInfo, estate));
+			}
+
+			bool att_in_modified_cols = bms_is_member(
+				att->attnum - YBGetFirstLowInvalidAttributeNumber(rel),
+				modifiedCols);
+
+			if (mtstate && !mtstate->yb_fetch_target_tuple && !att_in_modified_cols)
+			{
+				/*
+				 * Without a target tuple, we only know the values of the
+				 * modified columns. But in this case it is safe to skip the
+				 * unmodified columns anyway.
+				 */
+				bms_free(modifiedCols);
+				continue;
+			}
 
 			if (att->attnotnull && slot_attisnull(slot, attrChk))
 			{
@@ -1959,7 +2006,7 @@ ExecConstraints(ResultRelInfo *resultRelInfo,
 				else
 					modifiedCols = bms_union(ExecGetInsertedCols(resultRelInfo, estate),
 											 ExecGetUpdatedCols(resultRelInfo, estate));
-				val_desc = ExecBuildSlotValueDescription(RelationGetRelid(rel),
+				val_desc = ExecBuildSlotValueDescription(rel,
 														 slot,
 														 tupdesc,
 														 modifiedCols,
@@ -1973,6 +2020,7 @@ ExecConstraints(ResultRelInfo *resultRelInfo,
 						 val_desc ? errdetail("Failing row contains %s.", val_desc) : 0,
 						 errtablecol(orig_rel, attrChk)));
 			}
+			bms_free(modifiedCols);
 		}
 	}
 
@@ -2011,7 +2059,7 @@ ExecConstraints(ResultRelInfo *resultRelInfo,
 			else
 				modifiedCols = bms_union(ExecGetInsertedCols(resultRelInfo, estate),
 										 ExecGetUpdatedCols(resultRelInfo, estate));
-			val_desc = ExecBuildSlotValueDescription(RelationGetRelid(rel),
+			val_desc = ExecBuildSlotValueDescription(rel,
 													 slot,
 													 tupdesc,
 													 modifiedCols,
@@ -2119,7 +2167,8 @@ ExecWithCheckOptions(WCOKind kind, ResultRelInfo *resultRelInfo,
 					else
 						modifiedCols = bms_union(ExecGetInsertedCols(resultRelInfo, estate),
 												 ExecGetUpdatedCols(resultRelInfo, estate));
-					val_desc = ExecBuildSlotValueDescription(RelationGetRelid(rel),
+
+					val_desc = ExecBuildSlotValueDescription(rel,
 															 slot,
 															 tupdesc,
 															 modifiedCols,
@@ -2198,7 +2247,7 @@ ExecWithCheckOptions(WCOKind kind, ResultRelInfo *resultRelInfo,
  * columns they are.
  */
 static char *
-ExecBuildSlotValueDescription(Oid reloid,
+ExecBuildSlotValueDescription(Relation rel,
 							  TupleTableSlot *slot,
 							  TupleDesc tupdesc,
 							  Bitmapset *modifiedCols,
@@ -2212,6 +2261,7 @@ ExecBuildSlotValueDescription(Oid reloid,
 	AclResult	aclresult;
 	bool		table_perm = false;
 	bool		any_perm = false;
+	Oid     reloid = RelationGetRelid(rel);
 
 	/*
 	 * Check if RLS is enabled and should be active for the relation; if so,
@@ -2266,7 +2316,7 @@ ExecBuildSlotValueDescription(Oid reloid,
 			 */
 			aclresult = pg_attribute_aclcheck(reloid, att->attnum,
 											  GetUserId(), ACL_SELECT);
-			if (bms_is_member(att->attnum - FirstLowInvalidHeapAttributeNumber,
+			if (bms_is_member(att->attnum - YBGetFirstLowInvalidAttributeNumber(rel),
 							  modifiedCols) || aclresult == ACLCHECK_OK)
 			{
 				column_perm = any_perm = true;
@@ -2395,9 +2445,16 @@ ExecBuildAuxRowMark(ExecRowMark *erm, List *targetlist)
 	if (erm->markType != ROW_MARK_COPY)
 	{
 		/* need ctid for all methods other than COPY */
-		snprintf(resname, sizeof(resname), "ctid%u", erm->rowmarkId);
+		if (IsYBBackedRelation(erm->relation))
+		{
+			snprintf(resname, sizeof(resname), "ybctid%u", erm->rowmarkId);
+		}
+		else
+		{
+			snprintf(resname, sizeof(resname), "ctid%u", erm->rowmarkId);
+		}
 		aerm->ctidAttNo = ExecFindJunkAttributeInTlist(targetlist,
-													   resname);
+													resname);
 		if (!AttributeNumberIsValid(aerm->ctidAttNo))
 			elog(ERROR, "could not find junk %s column", resname);
 	}

@@ -84,7 +84,7 @@ static void ShutdownExprContext(ExprContext *econtext, bool isCommit);
  * Principally, this creates the per-query memory context that will be
  * used to hold all working data that lives till the end of the query.
  * Note that the per-query context will become a child of the caller's
- * CurrentMemoryContext.
+ * GetCurrentMemoryContext().
  * ----------------
  */
 EState *
@@ -97,7 +97,7 @@ CreateExecutorState(void)
 	/*
 	 * Create the per-query context for this Executor run.
 	 */
-	qcontext = AllocSetContextCreate(CurrentMemoryContext,
+	qcontext = AllocSetContextCreate(GetCurrentMemoryContext(),
 									 "ExecutorState",
 									 ALLOCSET_DEFAULT_SIZES);
 
@@ -169,6 +169,37 @@ CreateExecutorState(void)
 	 * Return the executor state structure
 	 */
 	MemoryContextSwitchTo(oldcontext);
+
+	/*
+	 * YugaByte-specific fields
+	 */
+	estate->yb_es_is_single_row_modify_txn = false;
+	estate->yb_es_is_fk_check_disabled = false;
+	estate->yb_conflict_slot = NULL;
+	estate->yb_es_in_txn_limit_ht_for_reads = 0;
+
+	estate->yb_exec_params.limit_count = 0;
+	estate->yb_exec_params.limit_offset = 0;
+	estate->yb_exec_params.limit_use_default = true;
+	estate->yb_exec_params.rowmark = -1;
+	estate->yb_exec_params.is_index_backfill = false;
+
+	/*
+	 * Pointer to the query's in_txn_limit_ht for read ops. This pointer is passed
+	 * down via PgDocOp instances to the DocDB read operations invoked for this
+	 * query. Only the first read operation initializes its value, and all the
+	 * other operations ensure that they don't read any value written past this
+	 * time.
+	 *
+	 * TODO(#16239): Each SQL statement can have multiple "EState"s. But we need
+	 * to ensure that only one in_txn_limit_ht is used for reads in one SQL
+	 * statement. Fix logic for such cases.
+	 */
+	estate->yb_exec_params.stmt_in_txn_limit_ht_for_reads =
+		&estate->yb_es_in_txn_limit_ht_for_reads;
+
+	estate->yb_exec_params.yb_fetch_row_limit = yb_fetch_row_limit;
+	estate->yb_exec_params.yb_fetch_size_limit = yb_fetch_size_limit;
 
 	return estate;
 }
@@ -367,13 +398,13 @@ CreateStandaloneExprContext(void)
 	econtext->ecxt_innertuple = NULL;
 	econtext->ecxt_outertuple = NULL;
 
-	econtext->ecxt_per_query_memory = CurrentMemoryContext;
+	econtext->ecxt_per_query_memory = GetCurrentMemoryContext();
 
 	/*
 	 * Create working memory for expression evaluation in this context.
 	 */
 	econtext->ecxt_per_tuple_memory =
-		AllocSetContextCreate(CurrentMemoryContext,
+		AllocSetContextCreate(GetCurrentMemoryContext(),
 							  "ExprContext",
 							  ALLOCSET_DEFAULT_SIZES);
 
@@ -468,7 +499,7 @@ MakePerTupleExprContext(EState *estate)
 /* ----------------------------------------------------------------
  *				 miscellaneous node-init support functions
  *
- * Note: all of these are expected to be called with CurrentMemoryContext
+ * Note: all of these are expected to be called with GetCurrentMemoryContext()
  * equal to the per-query memory context.
  * ----------------------------------------------------------------
  */
@@ -1280,7 +1311,8 @@ ExecGetInsertedCols(ResultRelInfo *relinfo, EState *estate)
 
 		if (relinfo->ri_RootToPartitionMap != NULL)
 			return execute_attr_map_cols(relinfo->ri_RootToPartitionMap->attrMap,
-										 rte->insertedCols);
+										 rte->insertedCols,
+										 relinfo->ri_RelationDesc);
 		else
 			return rte->insertedCols;
 	}
@@ -1314,7 +1346,8 @@ ExecGetUpdatedCols(ResultRelInfo *relinfo, EState *estate)
 
 		if (relinfo->ri_RootToPartitionMap != NULL)
 			return execute_attr_map_cols(relinfo->ri_RootToPartitionMap->attrMap,
-										 rte->updatedCols);
+										 rte->updatedCols,
+										 relinfo->ri_RelationDesc);
 		else
 			return rte->updatedCols;
 	}

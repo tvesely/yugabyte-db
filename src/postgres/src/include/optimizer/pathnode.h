@@ -326,13 +326,24 @@ extern ParamPathInfo *get_joinrel_parampathinfo(PlannerInfo *root,
 												SpecialJoinInfo *sjinfo,
 												Relids required_outer,
 												List **restrict_clauses);
+extern bool yb_has_same_batching_reqs(List *paths);
 extern ParamPathInfo *get_appendrel_parampathinfo(RelOptInfo *appendrel,
 												  Relids required_outer);
 extern ParamPathInfo *find_param_path_info(RelOptInfo *rel,
 										   Relids required_outer);
+
+extern ParamPathInfo *yb_find_batched_param_path_info(
+	RelOptInfo *rel,
+	Relids required_outer,
+	Relids yb_required_batched_outer);
 extern RelOptInfo *build_child_join_rel(PlannerInfo *root,
 										RelOptInfo *outer_rel, RelOptInfo *inner_rel,
 										RelOptInfo *parent_joinrel, List *restrictlist,
 										SpecialJoinInfo *sjinfo, JoinType jointype);
+extern Path *yb_create_distinct_index_path(PlannerInfo *root,
+									 	   IndexOptInfo *index,
+									 	   IndexPath *basepath,
+									 	   int yb_distinct_prefixlen,
+									 	   int yb_distinct_nkeys);
 
 #endif							/* PATHNODE_H */

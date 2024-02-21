@@ -120,7 +120,8 @@ typedef enum
 	PGC_S_OVERRIDE,				/* special case to forcibly set default */
 	PGC_S_INTERACTIVE,			/* dividing line for error reporting */
 	PGC_S_TEST,					/* test per-database or per-user setting */
-	PGC_S_SESSION				/* SET command */
+	PGC_S_SESSION,				/* SET command */
+	YSQL_CONN_MGR				/* SET SESSION PARAMETER packet */
 } GucSource;
 
 /*
@@ -188,6 +189,9 @@ typedef void (*GucStringAssignHook) (const char *newval, void *extra);
 typedef void (*GucEnumAssignHook) (int newval, void *extra);
 
 typedef const char *(*GucShowHook) (void);
+
+typedef bool (*GucOidCheckHook) (Oid *newval, void **extra, GucSource source);
+typedef void (*GucOidAssignHook) (Oid newval, void *extra);
 
 /*
  * Miscellaneous
@@ -263,6 +267,7 @@ extern PGDLLIMPORT int log_parameter_max_length_on_error;
 extern PGDLLIMPORT int log_min_error_statement;
 extern PGDLLIMPORT int log_min_messages;
 extern PGDLLIMPORT int client_min_messages;
+
 extern PGDLLIMPORT int log_min_duration_sample;
 extern PGDLLIMPORT int log_min_duration_statement;
 extern PGDLLIMPORT int log_temp_files;
@@ -291,6 +296,11 @@ extern PGDLLIMPORT int tcp_user_timeout;
 #ifdef TRACE_SORT
 extern PGDLLIMPORT bool trace_sort;
 #endif
+
+extern PGDLLIMPORT bool yb_enable_memory_tracking;
+extern PGDLLIMPORT int	yb_bnl_batch_size;
+extern PGDLLIMPORT bool  yb_bnl_enable_hashing;
+extern PGDLLIMPORT bool yb_lock_pk_single_rpc;
 
 /*
  * Functions exported by guc.c
@@ -321,6 +331,20 @@ extern void DefineCustomIntVariable(const char *name,
 									GucIntCheckHook check_hook,
 									GucIntAssignHook assign_hook,
 									GucShowHook show_hook);
+
+extern void DefineCustomOidVariable(
+						const char *name,
+						const char *short_desc,
+						const char *long_desc,
+						Oid *valueAddr,
+						Oid bootValue,
+						Oid minValue,
+						Oid maxValue,
+						GucContext context,
+						int flags,
+						GucOidCheckHook check_hook,
+						GucOidAssignHook assign_hook,
+						GucShowHook show_hook);
 
 extern void DefineCustomRealVariable(const char *name,
 									 const char *short_desc,
@@ -382,6 +406,7 @@ extern void ReportChangedGUCOptions(void);
 extern void ParseLongOption(const char *string, char **name, char **value);
 extern bool parse_int(const char *value, int *result, int flags,
 					  const char **hintmsg);
+extern bool parse_oid(const char *value, Oid *result, const char **hintmsg);
 extern bool parse_real(const char *value, double *result, int flags,
 					   const char **hintmsg);
 extern int	set_config_option(const char *name, const char *value,

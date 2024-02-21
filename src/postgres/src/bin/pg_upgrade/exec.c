@@ -408,8 +408,8 @@ check_bin_dir(ClusterInfo *cluster, bool check_versions)
 		 * target version.
 		 */
 		check_exec(cluster->bindir, "initdb", check_versions);
-		check_exec(cluster->bindir, "pg_dump", check_versions);
-		check_exec(cluster->bindir, "pg_dumpall", check_versions);
+		check_exec(cluster->bindir, "ysql_dump", check_versions);
+		check_exec(cluster->bindir, "ysql_dumpall", check_versions);
 		check_exec(cluster->bindir, "pg_restore", check_versions);
 		check_exec(cluster->bindir, "psql", check_versions);
 		check_exec(cluster->bindir, "vacuumdb", check_versions);

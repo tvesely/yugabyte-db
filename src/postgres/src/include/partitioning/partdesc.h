@@ -47,4 +47,7 @@ extern void DestroyPartitionDirectory(PartitionDirectory pdir);
 
 extern Oid	get_default_oid_from_partdesc(PartitionDesc partdesc);
 
+/* Yugabyte: Change partitioning functions from static to extern for yb modules */
+extern PartitionDesc RelationBuildPartitionDesc(Relation rel, bool omit_detached);
+
 #endif							/* PARTCACHE_H */

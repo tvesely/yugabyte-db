@@ -10,6 +10,22 @@
  * IDENTIFICATION
  *	  src/backend/executor/nodeModifyTable.c
  *
+ * The following only applies to changes made to this file as part of
+ * YugaByte development.
+ *
+ * Portions Copyright (c) YugaByte, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you
+ * may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+ * implied.  See the License for the specific language governing
+ * permissions and limitations under the License.
  *-------------------------------------------------------------------------
  */
 /* INTERFACE ROUTINES
@@ -63,6 +79,21 @@
 #include "utils/memutils.h"
 #include "utils/rel.h"
 
+/*  Yugabyte includes */
+#include "access/sysattr.h"
+#include "access/yb_scan.h"
+#include "catalog/dependency.h"
+#include "catalog/pg_database.h"
+#include "catalog/pg_depend.h"
+#include "catalog/pg_shdepend.h"
+#include "catalog/yb_catalog_version.h"
+#include "executor/ybcModifyTable.h"
+#include "optimizer/ybcplan.h"
+#include "parser/parsetree.h"
+#include "utils/syscache.h"
+#include "utils/typcache.h"
+
+#include "pg_yb_utils.h"
 
 typedef struct MTTargetRelLookup
 {
@@ -185,6 +216,16 @@ static TupleTableSlot *mergeGetUpdateNewTuple(ResultRelInfo *relinfo,
 											  MergeActionState *relaction);
 
 
+static void YbPostProcessDml(CmdType cmd_type,
+							 Relation rel,
+							 TupleDesc desc,
+							 HeapTuple newtup);
+static void YbTupleTablePostProcessDml(CmdType cmd_type, Relation rel,
+									   TupleTableSlot *slot);
+static void YbHandlePossibleObjectPinning(TupleDesc desc,
+										  HeapTuple tuple,
+										  bool is_shared_dep);
+
 /*
  * Verify that the tuples to be produced by INSERT match the
  * target relation's rowtype
@@ -213,6 +254,11 @@ ExecCheckPlanOutput(Relation resultRel, List *targetList)
 		Form_pg_attribute attr;
 
 		Assert(!tle->resjunk);	/* caller removed junk items already */
+		if (tle->resjunk)
+			continue;			/* ignore junk tlist items */
+
+		if (IsYsqlUpgrade && tle->resno == ObjectIdAttributeNumber)
+			continue;			/* ignore oid system column used in YSQL upgrade */
 
 		if (attno >= resultDesc->natts)
 			ereport(ERROR,
@@ -658,7 +704,8 @@ ExecInitUpdateProjection(ModifyTableState *mtstate,
 								  relDesc,
 								  mtstate->ps.ps_ExprContext,
 								  resultRelInfo->ri_newTupleSlot,
-								  &mtstate->ps);
+								  &mtstate->ps,
+								  node->ybUseScanTupleInUpdate);
 
 	resultRelInfo->ri_projectNewInfoValid = true;
 }
@@ -784,6 +831,12 @@ ExecInsert(ModifyTableContext *context,
 	MemoryContext oldContext;
 
 	/*
+	 * The attribute "yb_conflict_slot" is only used within ExecInsert.
+	 * Initialize its value to NULL.
+	 */
+	estate->yb_conflict_slot = NULL;
+
+	/*
 	 * If the input result relation is a partitioned table, find the leaf
 	 * partition to insert the tuple into.
 	 */
@@ -805,9 +858,24 @@ ExecInsert(ModifyTableContext *context,
 	 * Open the table's indexes, if we have not done so already, so that we
 	 * can add new index entries for the inserted tuple.
 	 */
-	if (resultRelationDesc->rd_rel->relhasindex &&
-		resultRelInfo->ri_IndexRelationDescs == NULL)
-		ExecOpenIndices(resultRelInfo, onconflict != ONCONFLICT_NONE);
+	if (IsYBRelation(resultRelInfo->ri_RelationDesc))
+	{
+		/*
+		 * For a Yugabyte table, we need to update the secondary indexes for
+		 * the INSERT statements. The ON CONFLICT UPDATE
+		 * execution also needs to process primary key index.
+		 */
+		if ((YBRelHasSecondaryIndices(resultRelInfo->ri_RelationDesc) ||
+			 onconflict != ONCONFLICT_NONE) &&
+			resultRelInfo->ri_IndexRelationDescs == NULL)
+			ExecOpenIndices(resultRelInfo, onconflict != ONCONFLICT_NONE);
+	}
+	else
+	{
+		if (resultRelationDesc->rd_rel->relhasindex &&
+			resultRelInfo->ri_IndexRelationDescs == NULL)
+			ExecOpenIndices(resultRelInfo, onconflict != ONCONFLICT_NONE);
+	}
 
 	/*
 	 * BEFORE ROW INSERT Triggers.
@@ -1011,7 +1079,7 @@ ExecInsert(ModifyTableContext *context,
 		 * Check the constraints of the tuple.
 		 */
 		if (resultRelationDesc->rd_att->constr)
-			ExecConstraints(resultRelInfo, slot, estate);
+			ExecConstraints(resultRelInfo, slot, estate, mtstate);
 
 		/*
 		 * Also check the tuple against the partition constraint, if there is
@@ -1069,7 +1137,8 @@ ExecInsert(ModifyTableContext *context,
 											 &returning))
 					{
 						InstrCountTuples2(&mtstate->ps, 1);
-						return returning;
+						result = returning;
+						goto conflict_resolved;
 					}
 					else
 						goto vlock;
@@ -1088,6 +1157,12 @@ ExecInsert(ModifyTableContext *context,
 					 * ExecGetReturningSlot() in the DO NOTHING case...
 					 */
 					Assert(onconflict == ONCONFLICT_NOTHING);
+					if (IsYBRelation(resultRelationDesc)) {
+						// YugaByte does not use Postgres transaction control code.
+						InstrCountTuples2(&mtstate->ps, 1);
+						result = NULL;
+						goto conflict_resolved;
+					}
 					ExecCheckTIDVisible(estate, resultRelInfo, &conflictTid,
 										ExecGetReturningSlot(estate, resultRelInfo));
 					InstrCountTuples2(&mtstate->ps, 1);
@@ -1095,67 +1170,104 @@ ExecInsert(ModifyTableContext *context,
 				}
 			}
 
-			/*
-			 * Before we start insertion proper, acquire our "speculative
-			 * insertion lock".  Others can use that to wait for us to decide
-			 * if we're going to go ahead with the insertion, instead of
-			 * waiting for the whole transaction to complete.
-			 */
-			specToken = SpeculativeInsertionLockAcquire(GetCurrentTransactionId());
-
-			/* insert the tuple, with the speculative token */
-			table_tuple_insert_speculative(resultRelationDesc, slot,
-										   estate->es_output_cid,
-										   0,
-										   NULL,
-										   specToken);
-
-			/* insert index entries for tuple */
-			recheckIndexes = ExecInsertIndexTuples(resultRelInfo,
-												   slot, estate, false, true,
-												   &specConflict,
-												   arbiterIndexes);
-
-			/* adjust the tuple's state accordingly */
-			table_tuple_complete_speculative(resultRelationDesc, slot,
-											 specToken, !specConflict);
-
-			/*
-			 * Wake up anyone waiting for our decision.  They will re-check
-			 * the tuple, see that it's no longer speculative, and wait on our
-			 * XID as if this was a regularly inserted tuple all along.  Or if
-			 * we killed the tuple, they will see it's dead, and proceed as if
-			 * the tuple never existed.
-			 */
-			SpeculativeInsertionLockRelease(GetCurrentTransactionId());
-
-			/*
-			 * If there was a conflict, start from the beginning.  We'll do
-			 * the pre-check again, which will now find the conflicting tuple
-			 * (unless it aborts before we get there).
-			 */
-			if (specConflict)
+			if (IsYBRelation(resultRelationDesc))
 			{
-				list_free(recheckIndexes);
-				goto vlock;
+				/*
+				 * YugaByte handles transaction-control internally, so speculative token are not being
+				 * locked and released in this call.
+				 * TODO(Mikhail) Verify the YugaByte transaction support works properly for on-conflict.
+				 */
+
+				YBCTupleTableInsert(resultRelInfo, slot, estate);
+
+				/* insert index entries for tuple */
+				recheckIndexes = ExecInsertIndexTuples(resultRelInfo, slot, estate, true, true,
+													   &specConflict, arbiterIndexes,
+													   NIL /* no_update_index_list */);
+			}
+			else
+			{
+				/*
+				 * Before we start insertion proper, acquire our "speculative
+				 * insertion lock".  Others can use that to wait for us to decide
+				 * if we're going to go ahead with the insertion, instead of
+				 * waiting for the whole transaction to complete.
+				 */
+				specToken = SpeculativeInsertionLockAcquire(GetCurrentTransactionId());
+
+				/* insert the tuple, with the speculative token */
+				table_tuple_insert_speculative(resultRelationDesc, slot,
+											   estate->es_output_cid,
+											   0,
+											   NULL,
+											   specToken);
+
+				/* insert index entries for tuple */
+				recheckIndexes = ExecInsertIndexTuples(resultRelInfo,
+													   slot, estate, false, true,
+													   &specConflict,
+													   arbiterIndexes,
+													   NIL /* no_update_index_list */);
+
+				/* adjust the tuple's state accordingly */
+				table_tuple_complete_speculative(resultRelationDesc, slot,
+												 specToken, !specConflict);
+
+				/*
+				 * Wake up anyone waiting for our decision.  They will re-check
+				 * the tuple, see that it's no longer speculative, and wait on our
+				 * XID as if this was a regularly inserted tuple all along.  Or if
+				 * we killed the tuple, they will see it's dead, and proceed as if
+				 * the tuple never existed.
+				 */
+				SpeculativeInsertionLockRelease(GetCurrentTransactionId());
+
+				/*
+				 * If there was a conflict, start from the beginning.  We'll do
+				 * the pre-check again, which will now find the conflicting tuple
+				 * (unless it aborts before we get there).
+				 */
+				if (specConflict)
+				{
+					list_free(recheckIndexes);
+					goto vlock;
+				}
 			}
 
-			/* Since there was no insertion conflict, we're done */
+			/* Since there was no more insertion conflict, we're done with ON CONFLICT DO UPDATE */
 		}
 		else
 		{
 			/* insert the tuple normally */
-			table_tuple_insert(resultRelationDesc, slot,
-							   estate->es_output_cid,
-							   0, NULL);
+			if (IsYBRelation(resultRelationDesc))
+			{
+				MemoryContext oldContext = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
+				YBCTupleTableInsert(resultRelInfo, slot, estate);
 
-			/* insert index entries for tuple */
-			if (resultRelInfo->ri_NumIndices > 0)
-				recheckIndexes = ExecInsertIndexTuples(resultRelInfo,
-													   slot, estate, false,
-													   false, NULL, NIL);
+				/* insert index entries for tuple */
+				if (YBCRelInfoHasSecondaryIndices(resultRelInfo))
+					recheckIndexes = ExecInsertIndexTuples(resultRelInfo, slot, estate, false, true,
+														   NULL, NIL,
+														   NIL /* no_update_index_list */);
+				MemoryContextSwitchTo(oldContext);
+			}
+			else
+			{
+				table_tuple_insert(resultRelationDesc, slot,
+								   estate->es_output_cid,
+								   0, NULL);
+
+				/* insert index entries for tuple */
+				if (resultRelInfo->ri_NumIndices > 0)
+					recheckIndexes = ExecInsertIndexTuples(resultRelInfo,
+														   slot, estate, false,
+														   false, NULL, NIL,
+														   NIL /* no_update_index_list */);
+			}
 		}
 	}
+
+	YbTupleTablePostProcessDml(CMD_INSERT, resultRelationDesc, slot);
 
 	if (canSetTag)
 		(estate->es_processed)++;
@@ -1216,6 +1328,11 @@ ExecInsert(ModifyTableContext *context,
 	if (insert_destrel)
 		*insert_destrel = resultRelInfo;
 
+conflict_resolved:
+	if (estate->yb_conflict_slot != NULL) {
+		ExecDropSingleTupleTableSlot(estate->yb_conflict_slot);
+		estate->yb_conflict_slot = NULL;
+	}
 	return result;
 }
 
@@ -1318,6 +1435,18 @@ ExecDeletePrologue(ModifyTableContext *context, ResultRelInfo *resultRelInfo,
 				   ItemPointer tupleid, HeapTuple oldtuple,
 				   TupleTableSlot **epqreturnslot)
 {
+	Relation resultRelationDesc = resultRelInfo->ri_RelationDesc;
+
+	/*
+	 * Unlike upstream PG, Yugabyte indexes have deletes explicitly written to
+	 * them. Open the Yugabyte table's indexes, if we have not done so already,
+	 * so that we can delete index entries for the deleted tuple.
+	 */
+	if (IsYBRelation(resultRelationDesc) &&
+		YBRelHasSecondaryIndices(resultRelationDesc) &&
+		resultRelInfo->ri_IndexRelationDescs == NULL)
+		ExecOpenIndices(resultRelInfo, false);
+
 	/* BEFORE ROW DELETE triggers */
 	if (resultRelInfo->ri_TrigDesc &&
 		resultRelInfo->ri_TrigDesc->trig_delete_before_row)
@@ -1485,6 +1614,34 @@ ExecDelete(ModifyTableContext *context,
 			ExecStoreAllNullTuple(slot);
 
 		slot->tts_tableOid = RelationGetRelid(resultRelationDesc);
+	}
+	else if (IsYBRelation(resultRelationDesc))
+	{
+		bool row_found = YBCExecuteDelete(resultRelationDesc,
+										  context->planSlot,
+										  ((ModifyTable *)context->mtstate->ps.plan)->ybReturningColumns,
+										  context->mtstate->yb_fetch_target_tuple,
+										  estate->yb_es_is_single_row_modify_txn
+													? YB_SINGLE_SHARD_TRANSACTION : YB_TRANSACTIONAL,
+										  changingPart,
+										  estate);
+
+		if (!row_found)
+		{
+			/*
+			 * No row was found. This is possible if it's a single row txn
+			 * and there is no row to delete (since we do not first do a scan).
+			 */
+			return NULL;
+		}
+
+		if (YBCRelInfoHasSecondaryIndices(resultRelInfo))
+		{
+			Datum	ybctid = YBCGetYBTupleIdFromSlot(context->planSlot);
+
+			/* Delete index entries of the old tuple */
+			ExecDeleteIndexTuples(resultRelInfo, ybctid, oldtuple, estate);
+		}
 	}
 	else
 	{
@@ -1658,6 +1815,11 @@ ldelete:;
 		 */
 	}
 
+	YbPostProcessDml(CMD_DELETE,
+					 resultRelationDesc,
+					 NULL /* desc */,
+					 NULL /* newtup */);
+
 	if (canSetTag)
 		(estate->es_processed)++;
 
@@ -1680,6 +1842,10 @@ ldelete:;
 		{
 			/* FDW must have provided a slot containing the deleted row */
 			Assert(!TupIsNull(slot));
+		}
+		else if (IsYBRelation(resultRelationDesc))
+		{
+			slot = context->planSlot;
 		}
 		else
 		{
@@ -1710,6 +1876,104 @@ ldelete:;
 	}
 
 	return NULL;
+}
+
+/* ----------------------------------------------------------------
+ * YBEqualDatums
+ *
+ * Function compares values of lhs and rhs datums with respect to value type and collation.
+ *
+ * Returns true in case value of lhs and rhs datums match.
+ * ----------------------------------------------------------------
+ */
+static bool
+YBEqualDatums(Datum lhs, Datum rhs, Oid atttypid, Oid collation)
+{
+	LOCAL_FCINFO(locfcinfo, 2);
+	TypeCacheEntry *typentry = lookup_type_cache(atttypid, TYPECACHE_CMP_PROC_FINFO);
+	if (!OidIsValid(typentry->cmp_proc_finfo.fn_oid))
+		ereport(ERROR,
+		        (errcode(ERRCODE_UNDEFINED_FUNCTION),
+		         errmsg("could not identify a comparison function for type %s",
+		                format_type_be(typentry->type_id))));
+
+	InitFunctionCallInfoData(*locfcinfo, &typentry->cmp_proc_finfo, 2, collation, NULL, NULL);
+	locfcinfo->args[0].value = lhs;
+	locfcinfo->args[0].isnull = false;
+	locfcinfo->args[1].value = rhs;
+	locfcinfo->args[1].isnull = false;
+	return DatumGetInt32(FunctionCallInvoke(locfcinfo)) == 0;
+}
+
+/* ----------------------------------------------------------------
+ * YBBuildExtraUpdatedCols
+ *
+ * Function compares attribute value in oldtuple and newtuple for attributes which are not in the
+ * updatedCols set. Returns set of changed attributes or NULL.
+ * ----------------------------------------------------------------
+ */
+static Bitmapset*
+YBBuildExtraUpdatedCols(Relation rel,
+                        HeapTuple oldtuple,
+                        HeapTuple newtuple,
+                        Bitmapset *updatedCols)
+{
+	if (bms_is_member(InvalidAttrNumber, updatedCols))
+		/* No extra work required in case the whore row is changed */
+		return NULL;
+
+	Bitmapset *result = NULL;
+	AttrNumber firstLowInvalidAttributeNumber = YBGetFirstLowInvalidAttributeNumber(rel);
+	TupleDesc tupleDesc = RelationGetDescr(rel);
+	for (int idx = 0; idx < tupleDesc->natts; ++idx)
+	{
+		FormData_pg_attribute *att_desc = TupleDescAttr(tupleDesc, idx);
+
+		AttrNumber attnum = att_desc->attnum;
+
+		/* Skip virtual (system) and dropped columns */
+		if (!IsRealYBColumn(rel, attnum))
+			continue;
+
+		int bms_idx = attnum - firstLowInvalidAttributeNumber;
+		if (bms_is_member(bms_idx, updatedCols))
+			continue;
+
+		bool old_is_null = false;
+		bool new_is_null = false;
+		Datum old_value = heap_getattr(oldtuple, attnum, tupleDesc, &old_is_null);
+		Datum new_value = heap_getattr(newtuple, attnum, tupleDesc, &new_is_null);
+		if (old_is_null != new_is_null ||
+		    (!new_is_null && !YBEqualDatums(old_value,
+		                                    new_value,
+		                                    att_desc->atttypid,
+		                                    att_desc->attcollation)))
+		{
+			result = bms_add_member(result, bms_idx);
+		}
+	}
+	return result;
+}
+
+/* YB_REVIEW(neil) Revisit later. */
+static Bitmapset *
+YBTupleTableBuildExtraUpdatedCols(Relation rel, HeapTuple oldtuple,
+								  TupleTableSlot *slot, Bitmapset *updatedCols)
+{
+	bool	   shouldFree = true;
+	HeapTuple  tuple = ExecFetchSlotHeapTuple(slot, true, &shouldFree);
+	Bitmapset *result;
+
+	/* Update the tuple with table oid */
+	slot->tts_tableOid = RelationGetRelid(rel);
+	tuple->t_tableOid = slot->tts_tableOid;
+
+	result = YBBuildExtraUpdatedCols(rel, oldtuple, tuple, updatedCols);
+
+	if (shouldFree)
+		pfree(tuple);
+
+	return result;
 }
 
 /*
@@ -1744,6 +2008,7 @@ ExecCrossPartitionUpdate(ModifyTableContext *context,
 	TupleConversionMap *tupconv_map;
 	bool		tuple_deleted;
 	TupleTableSlot *epqslot = NULL;
+	bool    prev_yb_is_single_row_modify_txn = estate->yb_es_is_single_row_modify_txn;
 
 	context->cpUpdateReturningSlot = NULL;
 	context->cpUpdateRetrySlot = NULL;
@@ -1867,6 +2132,9 @@ ExecCrossPartitionUpdate(ModifyTableContext *context,
 		ExecInsert(context, mtstate->rootResultRelInfo, slot, canSetTag,
 				   inserted_tuple, insert_destrel);
 
+	/* Revert ExecPrepareTupleRouting's node change. */
+	estate->yb_es_is_single_row_modify_txn = prev_yb_is_single_row_modify_txn;
+
 	/*
 	 * Reset the transition state that may possibly have been written by
 	 * INSERT.
@@ -1896,8 +2164,12 @@ ExecUpdatePrologue(ModifyTableContext *context, ResultRelInfo *resultRelInfo,
 	/*
 	 * Open the table's indexes, if we have not done so already, so that we
 	 * can add new index entries for the updated tuple.
+	 *
+	 * For a Yugabyte table, we need to update the secondary indexes.
 	 */
-	if (resultRelationDesc->rd_rel->relhasindex &&
+	if ((IsYBRelation(resultRelationDesc) ?
+			 (YBRelHasSecondaryIndices(resultRelationDesc)) :
+			 resultRelationDesc->rd_rel->relhasindex) &&
 		resultRelInfo->ri_IndexRelationDescs == NULL)
 		ExecOpenIndices(resultRelInfo, false);
 
@@ -2080,7 +2352,7 @@ lreplace:;
 	 * have it validate all remaining checks.
 	 */
 	if (resultRelationDesc->rd_att->constr)
-		ExecConstraints(resultRelInfo, slot, estate);
+		ExecConstraints(resultRelInfo, slot, estate, context->mtstate);
 
 	/*
 	 * replace the heap tuple
@@ -2104,12 +2376,179 @@ lreplace:;
 	return result;
 }
 
+/* YB_REVIEW(neil) Revisit later. */
+static bool
+YBExecUpdateAct(ModifyTableContext *context, ResultRelInfo *resultRelInfo,
+				ItemPointer tupleid, HeapTuple oldtuple, TupleTableSlot *slot,
+				bool canSetTag, UpdateContext *updateCxt)
+{
+	EState	*estate = context->estate;
+	Relation resultRelationDesc = resultRelInfo->ri_RelationDesc;
+	bool	 partition_constraint_failed;
+
+	updateCxt->crossPartUpdate = false;
+
+	/*
+	 * If we generate a new candidate tuple after EvalPlanQual testing, we
+	 * must loop back here and recheck any RLS policies and constraints. (We
+	 * don't need to redo triggers, however.  If there are any BEFORE triggers
+	 * then trigger.c will have done table_tuple_lock to lock the correct
+	 * tuple, so there's no need to do them again.)
+	 */
+yb_lreplace:;
+
+	/* ensure slot is independent, consider e.g. EPQ */
+	ExecMaterializeSlot(slot);
+
+	/*
+	 * Check the constraints of the tuple.
+	 */
+	if (resultRelationDesc->rd_att->constr)
+		ExecConstraints(resultRelInfo, slot, estate, context->mtstate);
+
+	/*
+	 * If partition constraint fails, this row might get moved to another
+	 * partition, in which case we should check the RLS CHECK policy just
+	 * before inserting into the new partition, rather than doing it here.
+	 * This is because a trigger on that partition might again change the row.
+	 * So skip the WCO checks if the partition constraint fails.
+	 */
+	partition_constraint_failed =
+		resultRelationDesc->rd_rel->relispartition &&
+		!ExecPartitionCheck(resultRelInfo, slot, estate, false /* emitError */);
+
+	/* Check any RLS UPDATE WITH CHECK policies */
+	if (!partition_constraint_failed &&
+		resultRelInfo->ri_WithCheckOptions != NIL)
+	{
+		/*
+		 * ExecWithCheckOptions() will skip any WCOs which are not of the kind
+		 * we are looking for at this point.
+		 */
+		ExecWithCheckOptions(WCO_RLS_UPDATE_CHECK, resultRelInfo, slot, estate);
+	}
+
+	/*
+	 * If a partition check failed, try to move the row into the right
+	 * partition.
+	 */
+	if (partition_constraint_failed)
+	{
+		TupleTableSlot *inserted_tuple;
+		ResultRelInfo  *insert_destrel = NULL;
+
+		/*
+		 * ExecCrossPartitionUpdate will first DELETE the row from the
+		 * partition it's currently in and then insert it back into the root
+		 * table, which will re-route it to the correct partition.  However,
+		 * if the tuple has been concurrently updated, a retry is needed.
+		 */
+		if (ExecCrossPartitionUpdate(context, resultRelInfo, tupleid, oldtuple,
+									 slot, canSetTag, updateCxt,
+									 &inserted_tuple, &insert_destrel))
+		{
+			/* success! */
+			updateCxt->updated = true;
+			updateCxt->crossPartUpdate = true;
+
+			/*
+			 * If the partitioned table being updated is referenced in foreign
+			 * keys, queue up trigger events to check that none of them were
+			 * violated.  No special treatment is needed in
+			 * non-cross-partition update situations, because the leaf
+			 * partition's AR update triggers will take care of that.  During
+			 * cross-partition updates implemented as delete on the source
+			 * partition followed by insert on the destination partition,
+			 * AR-UPDATE triggers of the root table (that is, the table
+			 * mentioned in the query) must be fired.
+			 *
+			 * NULL insert_destrel means that the move failed to occur, that
+			 * is, the update failed, so no need to anything in that case.
+			 */
+			if (insert_destrel && resultRelInfo->ri_TrigDesc &&
+				resultRelInfo->ri_TrigDesc->trig_update_after_row)
+				ExecCrossPartitionUpdateForeignKey(context, resultRelInfo,
+												   insert_destrel, tupleid,
+												   slot, inserted_tuple);
+
+			return true;
+		}
+
+#ifdef YB_TODO
+		/* Handle MERGE */
+		/*
+		 * No luck, a retry is needed.  If running MERGE, we do not do so
+		 * here; instead let it handle that on its own rules.
+		 */
+		if (context->relaction != NULL)
+			return TM_Updated;
+#endif
+
+		/*
+		 * ExecCrossPartitionUpdate installed an updated version of the new
+		 * tuple in the retry slot; start over.
+		 */
+		slot = context->cpUpdateRetrySlot;
+		goto yb_lreplace;
+	}
+
+	RangeTblEntry *rte =
+		rt_fetch(resultRelInfo->ri_RangeTableIndex, estate->es_range_table);
+
+	bool row_found = false;
+	bool beforeRowUpdateTriggerFired =
+		resultRelInfo->ri_TrigDesc &&
+		resultRelInfo->ri_TrigDesc->trig_update_before_row;
+	Bitmapset *actualUpdatedCols = rte->updatedCols;
+	Bitmapset *extraUpdatedCols = NULL;
+	if (beforeRowUpdateTriggerFired)
+	{
+		/* trigger might have changed tuple */
+		extraUpdatedCols = YBTupleTableBuildExtraUpdatedCols(
+			resultRelationDesc, oldtuple, slot, rte->updatedCols);
+		if (extraUpdatedCols)
+		{
+			extraUpdatedCols =
+				bms_add_members(extraUpdatedCols, rte->updatedCols);
+			actualUpdatedCols = extraUpdatedCols;
+		}
+	}
+
+	Bitmapset *primary_key_bms = YBGetTablePrimaryKeyBms(resultRelationDesc);
+	bool	   is_pk_updated = bms_overlap(primary_key_bms, actualUpdatedCols);
+	bms_free(primary_key_bms);
+
+	/*
+	 * TODO(alex): It probably makes more sense to pass a
+	 *             transformed slot instead of a plan slot? Note though
+	 *             that it can have tuple materialized already.
+	 */
+
+	ModifyTable *plan = (ModifyTable *) context->mtstate->ps.plan;
+	if (is_pk_updated)
+	{
+		YBCExecuteUpdateReplace(resultRelationDesc, context->planSlot, slot, estate);
+		row_found = true;
+	}
+	else
+		row_found = YBCExecuteUpdate(resultRelInfo, context->planSlot, slot,
+									 oldtuple, estate, plan,
+									 context->mtstate->yb_fetch_target_tuple,
+									 estate->yb_es_is_single_row_modify_txn
+											? YB_SINGLE_SHARD_TRANSACTION : YB_TRANSACTIONAL,
+									 actualUpdatedCols, canSetTag);
+
+	bms_free(extraUpdatedCols);
+	return row_found;
+}
+
 /*
  * ExecUpdateEpilogue -- subroutine for ExecUpdate
  *
  * Closing steps of updating a tuple.  Must be called if ExecUpdateAct
  * returns indicating that the tuple was updated.
  */
+/* YB_REVIEW(neil) Revisit later. */
 static void
 ExecUpdateEpilogue(ModifyTableContext *context, UpdateContext *updateCxt,
 				   ResultRelInfo *resultRelInfo, ItemPointer tupleid,
@@ -2119,21 +2558,53 @@ ExecUpdateEpilogue(ModifyTableContext *context, UpdateContext *updateCxt,
 	ModifyTableState *mtstate = context->mtstate;
 
 	/* insert index entries for tuple if necessary */
-	if (resultRelInfo->ri_NumIndices > 0 && updateCxt->updateIndexes)
-		recheckIndexes = ExecInsertIndexTuples(resultRelInfo,
-											   slot, context->estate,
-											   true, false,
-											   NULL, NIL);
+	if (IsYBRelation(resultRelInfo->ri_RelationDesc))
+	{
+		/*
+		 * Update indices selectively if necessary, updates w/o fetched target
+		 * tuple do not affect indices.
+		 */
+		if (YBCRelInfoHasSecondaryIndices(resultRelInfo) &&
+			mtstate->yb_fetch_target_tuple)
+		{
+			Datum ybctid = YBCGetYBTupleIdFromSlot(context->planSlot);
+			List *no_update_index_list =
+				((ModifyTable *) mtstate->ps.plan)->no_update_index_list;
 
-	/* AFTER ROW UPDATE Triggers */
-	ExecARUpdateTriggers(context->estate, resultRelInfo,
-						 NULL, NULL,
-						 tupleid, oldtuple, slot,
-						 recheckIndexes,
-						 mtstate->operation == CMD_INSERT ?
-						 mtstate->mt_oc_transition_capture :
-						 mtstate->mt_transition_capture,
-						 false);
+			/* Delete index entries of the old tuple */
+			ExecDeleteIndexTuplesOptimized(resultRelInfo, ybctid, oldtuple,
+										   context->estate,
+										   no_update_index_list);
+
+			/* Insert new index entries for tuple */
+			recheckIndexes = ExecInsertIndexTuples(resultRelInfo, slot,
+												   context->estate, false, true,
+												   NULL, NIL,
+												   no_update_index_list);
+		}
+	}
+	else
+	{
+		if (resultRelInfo->ri_NumIndices > 0 && updateCxt->updateIndexes)
+			recheckIndexes = ExecInsertIndexTuples(resultRelInfo,
+												slot, context->estate,
+												true, false,
+												NULL, NIL,
+												NIL /* no_update_index_list */);
+	}
+
+	if (!((ModifyTable *) mtstate->ps.plan)->no_row_trigger)
+	{
+		/* AFTER ROW UPDATE Triggers */
+		ExecARUpdateTriggers(context->estate, resultRelInfo,
+								NULL, NULL,
+								tupleid, oldtuple, slot,
+								recheckIndexes,
+								mtstate->operation == CMD_INSERT ?
+								mtstate->mt_oc_transition_capture :
+								mtstate->mt_transition_capture,
+								false);
+	}
 
 	/*
 	 * Check any WITH CHECK OPTION constraints from parent views.  We are
@@ -2245,6 +2716,7 @@ ExecCrossPartitionUpdateForeignKey(ModifyTableContext *context,
  *		Returns RETURNING result if any, otherwise NULL.
  * ----------------------------------------------------------------
  */
+/* YB_REVIEW(neil) Revisit later. */
 static TupleTableSlot *
 ExecUpdate(ModifyTableContext *context, ResultRelInfo *resultRelInfo,
 		   ItemPointer tupleid, HeapTuple oldtuple, TupleTableSlot *slot,
@@ -2298,6 +2770,27 @@ ExecUpdate(ModifyTableContext *context, ResultRelInfo *resultRelInfo,
 		 * them.  (This covers the case where the FDW replaced the slot.)
 		 */
 		slot->tts_tableOid = RelationGetRelid(resultRelationDesc);
+	}
+	else if (IsYBRelation(resultRelationDesc))
+	{
+		/* Fill in the slot appropriately */
+		ExecUpdatePrepareSlot(resultRelInfo, slot, estate);
+		if (!YBExecUpdateAct(context, resultRelInfo, tupleid, oldtuple, slot,
+							 canSetTag, &updateCxt))
+		{
+			/*
+			 * No row was found. This is possible if it's a single row txn
+			 * and there is no row to update (since we do not first do a scan).
+			 */
+			return NULL;
+		}
+		/*
+		 * If ExecUpdateAct reports that a cross-partition update was done,
+		 * then the RETURNING tuple (if any) has been projected and there's
+		 * nothing else for us to do.
+		 */
+		if (updateCxt.crossPartUpdate)
+			return context->cpUpdateReturningSlot;
 	}
 	else
 	{
@@ -2458,6 +2951,8 @@ redo_act:
 		}
 	}
 
+	YbTupleTablePostProcessDml(CMD_UPDATE, resultRelationDesc, slot);
+
 	if (canSetTag)
 		(estate->es_processed)++;
 
@@ -2496,6 +2991,8 @@ ExecOnConflictUpdate(ModifyTableContext *context,
 	ExprContext *econtext = mtstate->ps.ps_ExprContext;
 	Relation	relation = resultRelInfo->ri_RelationDesc;
 	ExprState  *onConflictSetWhere = resultRelInfo->ri_onConflict->oc_WhereClause;
+	HeapTuple	ybOldTuple = NULL;
+	bool 		ybShouldFree = false;
 	TupleTableSlot *existing = resultRelInfo->ri_onConflict->oc_Existing;
 	TM_FailureData tmfd;
 	LockTupleMode lockmode;
@@ -2503,6 +3000,26 @@ ExecOnConflictUpdate(ModifyTableContext *context,
 	Datum		xminDatum;
 	TransactionId xmin;
 	bool		isnull;
+
+	/*
+	 * This routine selects data and check with indexes for conflicts.
+	 * - When selecting data from disk, Postgres prepares a heap buffer to hold the selected row
+	 *   and performs transaction-control locking operations on the selected row.
+	 * - YugaByte usually uses Postgres heap buffer after selecting data from storage (DocDB).
+	 *   However, in this case, it's complicated to use the heap buffer because the two systems use
+	 *   different tuple IDs - "ybctid" vs "ctid".
+	 * - Also, YugaByte manages transactions separately from Postgres's plan execution.
+	 *
+	 * Coding-wise, Posgres writes tuple to heap buffer and writes its tuple ID to "conflictTid".
+	 * However, YugaByte writes the conflict tuple including its "ybctid" to execution state "estate"
+	 * and then frees the slot when done.
+	 */
+	if (IsYBRelation(relation)) {
+		/* Initialize result without calling postgres. */
+		test = TM_Ok;
+		ItemPointerSetInvalid(&tmfd.ctid);
+		goto yb_skip_transaction_control_check;
+	}
 
 	/* Determine lock mode to use */
 	lockmode = ExecUpdateLockMode(context->estate, resultRelInfo);
@@ -2609,6 +3126,7 @@ ExecOnConflictUpdate(ModifyTableContext *context,
 			elog(ERROR, "unrecognized table_tuple_lock status: %u", test);
 	}
 
+yb_skip_transaction_control_check:
 	/* Success, the tuple is locked. */
 
 	/*
@@ -2624,7 +3142,14 @@ ExecOnConflictUpdate(ModifyTableContext *context,
 	 * snapshot.  This is in line with the way UPDATE deals with newer tuple
 	 * versions.
 	 */
-	ExecCheckTupleVisible(context->estate, relation, existing);
+	if (!IsYBRelation(relation))
+		ExecCheckTupleVisible(context->estate, relation, existing);
+	else
+	{
+		ybOldTuple = ExecFetchSlotHeapTuple(context->estate->yb_conflict_slot, true, &ybShouldFree);
+		ExecStoreHeapTuple(ybOldTuple, existing, false /* shouldFree */);
+		TABLETUPLE_YBCTID(context->planSlot) = HEAPTUPLE_YBCTID(ybOldTuple);
+	}
 
 	/*
 	 * Make tuple and any needed join variables available to ExecQual and
@@ -2678,11 +3203,15 @@ ExecOnConflictUpdate(ModifyTableContext *context,
 	 * wCTE in the ON CONFLICT's SET.
 	 */
 
+	ItemPointer ybTid = IsYBRelation(relation) ? NULL : conflictTid;
 	/* Execute UPDATE with projection */
 	*returning = ExecUpdate(context, resultRelInfo,
-							conflictTid, NULL,
+							ybTid, ybOldTuple,
 							resultRelInfo->ri_onConflict->oc_ProjSlot,
 							canSetTag);
+
+	if (ybShouldFree)
+		pfree(ybOldTuple);
 
 	/*
 	 * Clear out existing tuple, as there might not be another conflict among
@@ -3335,7 +3864,8 @@ ExecInitMerge(ModifyTableState *mtstate, EState *estate)
 												  relationDesc,
 												  econtext,
 												  resultRelInfo->ri_newTupleSlot,
-												  &mtstate->ps);
+												  &mtstate->ps,
+												  node->ybUseScanTupleInUpdate);
 					mtstate->mt_merge_subcommands |= MERGE_UPDATE;
 					break;
 				case CMD_DELETE:
@@ -3552,8 +4082,18 @@ ExecPrepareTupleRouting(ModifyTableState *mtstate,
 	if (map != NULL)
 	{
 		TupleTableSlot *new_slot = partrel->ri_PartitionTupleSlot;
-
 		slot = execute_attr_map_slot(map->attrMap, slot, new_slot);
+	}
+
+	/*
+	 * For a partitioned relation, table constraints (such as FK) are visible on a
+	 * target partition rather than an original insert target.
+	 * As such, we should reevaluate single-row transaction constraints after
+	 * we determine the concrete partition.
+	 */
+	if (estate->yb_es_is_single_row_modify_txn)
+	{
+		estate->yb_es_is_single_row_modify_txn = YBCIsSingleRowTxnCapableRel(partrel);
 	}
 
 	*partRelInfo = partrel;
@@ -3571,6 +4111,7 @@ static TupleTableSlot *
 ExecModifyTable(PlanState *pstate)
 {
 	ModifyTableState *node = castNode(ModifyTableState, pstate);
+	ModifyTable *plan = (ModifyTable *) node->ps.plan;
 	ModifyTableContext context;
 	EState	   *estate = node->ps.state;
 	CmdType		operation = node->operation;
@@ -3718,6 +4259,8 @@ ExecModifyTable(PlanState *pstate)
 		tupleid = NULL;
 		oldtuple = NULL;
 
+		Relation relation = resultRelInfo->ri_RelationDesc;
+
 		/*
 		 * For UPDATE/DELETE/MERGE, fetch the row identity info for the tuple
 		 * to be updated/deleted/merged.  For a heap relation, that's a TID;
@@ -3725,19 +4268,57 @@ ExecModifyTable(PlanState *pstate)
 		 * tuple in toto.  Keep this in step with the part of
 		 * ExecInitModifyTable that sets up ri_RowIdAttNo.
 		 */
-		if (operation == CMD_UPDATE || operation == CMD_DELETE ||
-			operation == CMD_MERGE)
+		if ((operation == CMD_UPDATE || operation == CMD_DELETE ||
+			 operation == CMD_MERGE) &&
+			(!IsYBRelation(relation) || node->yb_fetch_target_tuple))
 		{
 			char		relkind;
 			Datum		datum;
 			bool		isNull;
 
 			relkind = resultRelInfo->ri_RelationDesc->rd_rel->relkind;
-			if (relkind == RELKIND_RELATION ||
-				relkind == RELKIND_MATVIEW ||
-				relkind == RELKIND_PARTITIONED_TABLE)
+			/*
+			 * For YugaByte relations extract the old row from the wholerow junk
+			 * attribute if needed.
+			 */
+			if (plan->ybHasWholeRowAttribute)
 			{
-				/* ri_RowIdAttNo refers to a ctid attribute */
+				AttrNumber  resno;
+				Plan	   *subplan = outerPlan(node->ps.plan);
+
+				resno = ExecFindJunkAttributeInTlist(subplan->targetlist, "wholerow");
+				datum = ExecGetJunkAttribute(slot, resno, &isNull);
+
+				/* shouldn't ever get a null result... */
+				if (isNull)
+					elog(ERROR, "wholerow is NULL");
+
+				oldtupdata.t_data = DatumGetHeapTupleHeader(datum);
+				oldtupdata.t_len =
+					HeapTupleHeaderGetDatumLength(oldtupdata.t_data);
+				ItemPointerSetInvalid(&(oldtupdata.t_self));
+				/* Historically, view triggers see invalid t_tableOid. */
+				oldtupdata.t_tableOid =
+					(relkind == RELKIND_VIEW) ? InvalidOid :
+					RelationGetRelid(resultRelInfo->ri_RelationDesc);
+
+				resno = ExecFindJunkAttributeInTlist(subplan->targetlist, "ybctid");
+				datum = ExecGetJunkAttribute(slot, resno, &isNull);
+
+				/* shouldn't ever get a null result... */
+				if (isNull)
+					elog(ERROR, "ybctid is NULL");
+
+				TABLETUPLE_YBCTID(context.planSlot) = datum;
+				HEAPTUPLE_YBCTID(&oldtupdata) = datum;
+
+				oldtuple = &oldtupdata;
+			}
+			else if (relkind == RELKIND_RELATION ||
+					 relkind == RELKIND_MATVIEW ||
+					 relkind == RELKIND_PARTITIONED_TABLE)
+			{
+				/* ri_RowIdAttNo refers to a ctid/ybctid attribute */
 				Assert(AttributeNumberIsValid(resultRelInfo->ri_RowIdAttNo));
 				datum = ExecGetJunkAttribute(slot,
 											 resultRelInfo->ri_RowIdAttNo,
@@ -3761,11 +4342,22 @@ ExecModifyTable(PlanState *pstate)
 						continue;	/* no RETURNING support yet */
 					}
 
-					elog(ERROR, "ctid is NULL");
+					if(IsYBRelation(relation))
+						elog(ERROR, "ybctid is NULL");
+					else
+						elog(ERROR, "ctid is NULL");
 				}
 
-				tupleid = (ItemPointer) DatumGetPointer(datum);
-				tuple_ctid = *tupleid;	/* be sure we don't free ctid!! */
+				if(IsYBRelation(relation))
+				{
+					tuple_ctid.yb_item.ybctid = datum;
+					TABLETUPLE_YBCTID(context.planSlot) = datum;
+				}
+				else
+				{
+					tupleid = (ItemPointer) DatumGetPointer(datum);
+					tuple_ctid = *tupleid;	/* be sure we don't free ctid!! */
+				}
 				tupleid = &tuple_ctid;
 			}
 
@@ -3816,42 +4408,60 @@ ExecModifyTable(PlanState *pstate)
 		{
 			case CMD_INSERT:
 				/* Initialize projection info if first time for this table */
+				/* YB_TODO(neil@yugabyte) Check to see if this is still needed.
+				 *   bool prev_yb_is_single_row_modify_txn =
+				 *       estate->es_yb_is_single_row_modify_txn;
+				 */
 				if (unlikely(!resultRelInfo->ri_projectNewInfoValid))
 					ExecInitInsertProjection(node, resultRelInfo);
 				slot = ExecGetInsertNewTuple(resultRelInfo, context.planSlot);
 				slot = ExecInsert(&context, resultRelInfo, slot,
 								  node->canSetTag, NULL, NULL);
+				/* YB_TODO(neil@yugabyte)
+				 * Check to see if this is still needed.
+				 */
+				/* Revert ExecPrepareTupleRouting's state change. */
+				/* estate->es_yb_is_single_row_modify_txn = prev_yb_is_single_row_modify_txn; */
 				break;
 
 			case CMD_UPDATE:
-				/* Initialize projection info if first time for this table */
-				if (unlikely(!resultRelInfo->ri_projectNewInfoValid))
-					ExecInitUpdateProjection(node, resultRelInfo);
-
-				/*
-				 * Make the new tuple by combining plan's output tuple with
-				 * the old tuple being updated.
-				 */
-				oldSlot = resultRelInfo->ri_oldTupleSlot;
-				if (oldtuple != NULL)
+				if (!IsYBRelation(relation) || node->yb_fetch_target_tuple)
 				{
-					/* Use the wholerow junk attr as the old tuple. */
-					ExecForceStoreHeapTuple(oldtuple, oldSlot, false);
-				}
-				else
-				{
-					/* Fetch the most recent version of old tuple. */
-					Relation	relation = resultRelInfo->ri_RelationDesc;
+					/* Initialize projection info if first time for this table */
+					if (unlikely(!resultRelInfo->ri_projectNewInfoValid))
+						ExecInitUpdateProjection(node, resultRelInfo);
 
-					if (!table_tuple_fetch_row_version(relation, tupleid,
-													   SnapshotAny,
-													   oldSlot))
-						elog(ERROR, "failed to fetch tuple being updated");
+					/*
+					 * Make the new tuple by combining plan's output tuple with
+					 * the old tuple being updated.
+					 */
+					oldSlot = resultRelInfo->ri_oldTupleSlot;
+					if (oldtuple != NULL)
+					{
+						/* Use the wholerow junk attr as the old tuple. */
+						ExecForceStoreHeapTuple(oldtuple, oldSlot, false);
+					}
+					else
+					{
+						/* Fetch the most recent version of old tuple. */
+						Relation relation = resultRelInfo->ri_RelationDesc;
+						bool row_found = false;
+						if (IsYBRelation(relation))
+							row_found = true;
+						else
+						{
+							row_found = table_tuple_fetch_row_version(
+								relation, tupleid, SnapshotAny, oldSlot);
+						}
+
+						if (!row_found)
+							elog(ERROR, "failed to fetch tuple being updated");
+					}
+					slot = internalGetUpdateNewTuple(resultRelInfo, context.planSlot,
+													 oldSlot, NULL);
+					context.GetUpdateNewTuple = internalGetUpdateNewTuple;
+					context.relaction = NULL;
 				}
-				slot = internalGetUpdateNewTuple(resultRelInfo, context.planSlot,
-												 oldSlot, NULL);
-				context.GetUpdateNewTuple = internalGetUpdateNewTuple;
-				context.relaction = NULL;
 
 				/* Now apply the update. */
 				slot = ExecUpdate(&context, resultRelInfo, tupleid, oldtuple,
@@ -3991,6 +4601,8 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 	mtstate->mt_merge_updated = 0;
 	mtstate->mt_merge_deleted = 0;
 
+	mtstate->yb_fetch_target_tuple = !YbCanSkipFetchingTargetTupleForModifyTable(node);
+
 	/*----------
 	 * Resolve the target relation. This is the same as:
 	 *
@@ -4105,7 +4717,17 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 			char		relkind;
 
 			relkind = resultRelInfo->ri_RelationDesc->rd_rel->relkind;
-			if (relkind == RELKIND_RELATION ||
+			if (IsYBRelation(resultRelInfo->ri_RelationDesc))
+			{
+				if (mtstate->yb_fetch_target_tuple)
+				{
+					resultRelInfo->ri_RowIdAttNo =
+						ExecFindJunkAttributeInTlist(subplan->targetlist, "ybctid");
+					if (!AttributeNumberIsValid(resultRelInfo->ri_RowIdAttNo))
+						elog(ERROR, "could not find junk ybctid column");
+				}
+			}
+			else if (relkind == RELKIND_RELATION ||
 				relkind == RELKIND_MATVIEW ||
 				relkind == RELKIND_PARTITIONED_TABLE)
 			{
@@ -4310,7 +4932,8 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 									  relationDesc,
 									  econtext,
 									  onconfl->oc_ProjSlot,
-									  &mtstate->ps);
+									  &mtstate->ps,
+									  node->ybUseScanTupleInUpdate);
 
 		/* initialize state to evaluate the WHERE clause, if any */
 		if (node->onConflictWhere)
@@ -4517,4 +5140,123 @@ ExecReScanModifyTable(ModifyTableState *node)
 	 * semantics of that would be a bit debatable anyway.
 	 */
 	elog(ERROR, "ExecReScanModifyTable is not implemented");
+}
+
+/*
+ * Should be called after INSERT/UPDATE/DELETE has been processed.
+ * For DELETE, both desc and newtup will be NULL.
+ */
+static void YbPostProcessDml(CmdType cmd_type,
+							 Relation rel,
+							 TupleDesc desc,
+							 HeapTuple newtup)
+{
+	if (!IsYBRelation(rel) || IsBootstrapProcessingMode())
+		return; /* Nothing to do*/
+
+	if (!YbIsSystemCatalogChange(rel))
+		return; /* We only care about system table changes here. */
+
+	/* This routine is for a very specific set of DMLs. */
+	Assert(cmd_type != CMD_INSERT ||
+		   cmd_type != CMD_UPDATE ||
+		   cmd_type != CMD_DELETE);
+
+	/*
+	 * TODO(alex, myang):
+	 *   Mark system catalogs as directly modified so that we know to increment
+	 *   catalog version. Handle shared table modification as well!
+	 */
+
+	/*
+	 * Update pinned objects cache if pg_depend/pg_shdepend was modified.
+	 */
+	bool is_shared_dep;
+
+	if (RelationGetRelid(rel) == DependRelationId)
+		is_shared_dep = false;
+	else if (RelationGetRelid(rel) == SharedDependRelationId)
+		is_shared_dep = true;
+	else
+		return; /* Nothing more to do */
+
+	if (cmd_type == CMD_INSERT)
+	{
+		YbHandlePossibleObjectPinning(desc, newtup, is_shared_dep);
+	}
+	else
+	{
+		/*
+		 * In YB, we do not fetch the deleted tuple content and thus we don't
+		 * know what exactly was deleted.
+		 * As a workaround, we invalidate the cache as a whole.
+		 * For simplicity, we do the same for UPDATE.
+		 */
+		 YbResetPinnedCache();
+	}
+}
+
+/* YB_REVIEW(neil) Revisit later. */
+static void
+YbTupleTablePostProcessDml(CmdType cmd_type, Relation rel, TupleTableSlot *slot)
+{
+	bool	  shouldFree = true;
+	HeapTuple tuple = ExecFetchSlotHeapTuple(slot, true, &shouldFree);
+
+	/* Update the tuple with table oid */
+	slot->tts_tableOid = RelationGetRelid(rel);
+	tuple->t_tableOid = slot->tts_tableOid;
+
+	YbPostProcessDml(cmd_type, rel, slot->tts_tupleDescriptor, tuple);
+
+	if (shouldFree)
+		 pfree(tuple);
+
+	return;
+}
+
+/*
+ * When inserting a new value into pg_depend or pg_shdepend, it should be reflected in the
+ * YB pinned object cache.
+ * This function takes care of that.
+ */
+static void
+YbHandlePossibleObjectPinning(TupleDesc desc,
+							  HeapTuple tuple,
+							  bool is_shared_dep)
+{
+	Assert(tuple != NULL);
+
+	int attnum_deptype = is_shared_dep ? Anum_pg_shdepend_deptype
+									   : Anum_pg_depend_deptype;
+	int attnum_refclassid = is_shared_dep ? Anum_pg_shdepend_refclassid
+										  : Anum_pg_depend_refclassid;
+	int attnum_refobjid = is_shared_dep ? Anum_pg_shdepend_refobjid
+										: Anum_pg_depend_refobjid;
+#ifdef YB_TODO
+	/* Pg15  No longer use pin */
+	char pin_deptype = is_shared_dep ? SHARED_DEPENDENCY_PIN
+									 : DEPENDENCY_PIN;
+#else
+	char pin_deptype = DEPENDENCY_PARTITION_PRI;
+#endif
+
+	bool is_null; /* Can never really be null. */
+
+	char deptype = DatumGetChar(
+		heap_getattr(tuple, attnum_deptype, desc, &is_null));
+	Assert(!is_null);
+
+	if (deptype != pin_deptype)
+		return; /* Nothing to do here. */
+
+	Oid refclassid = DatumGetObjectId(
+		heap_getattr(tuple, attnum_refclassid, desc, &is_null));
+	Assert(!is_null);
+
+	Oid refobjid = DatumGetObjectId(
+		heap_getattr(tuple, attnum_refobjid, desc, &is_null));
+	Assert(!is_null);
+
+	YbPinObjectIfNeeded(refclassid, refobjid, is_shared_dep);
 }

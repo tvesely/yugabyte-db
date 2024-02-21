@@ -18,6 +18,8 @@
 
 #include "access/attnum.h"
 #include "access/htup.h"
+#include "relcache.h"
+
 /* we intentionally do not include utils/catcache.h here */
 
 /*
@@ -113,10 +115,22 @@ enum SysCacheIdentifier
 	TYPENAMENSP,
 	TYPEOID,
 	USERMAPPINGOID,
-	USERMAPPINGUSERSERVER
+	USERMAPPINGUSERSERVER,
+	YBTABLEGROUPOID
 
-#define SysCacheSize (USERMAPPINGUSERSERVER + 1)
+#define SysCacheSize (YBTABLEGROUPOID + 1)
 };
+
+/* Used in IsYugaByteEnabled() mode only */
+extern void YbSetSysCacheTuple(Relation rel, HeapTuple tup);
+extern void YbPreloadCatalogCache(int cache_id, int idx_cache_id);
+
+#ifdef YB_TODO
+extern void YbInitPinnedCacheIfNeeded();
+extern bool YbIsObjectPinned(Oid classId, Oid objectId, bool shared_dependency);
+#endif
+extern void YbResetPinnedCache();
+extern void YbPinObjectIfNeeded(Oid classId, Oid objectId, bool shared_dependency);
 
 extern void InitCatalogCache(void);
 extern void InitCatalogCachePhase2(void);

@@ -39,6 +39,8 @@
 	((id) == 'T' || (id) == 'D' || (id) == 'd' || (id) == 'V' || \
 	 (id) == 'E' || (id) == 'N' || (id) == 'A')
 
+#define PQmblenBounded(s, e)  strnlen(s, PQmblen(s, e))
+
 
 static void handleSyncLoss(PGconn *conn, char id, int msgLength);
 static int	getRowDescriptions(PGconn *conn, int msgLength);

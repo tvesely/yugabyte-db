@@ -249,6 +249,7 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 	toast_relid = heap_create_with_catalog(toast_relname,
 										   namespaceid,
 										   rel->rd_rel->reltablespace,
+										   InvalidOid, /* tablegroup */
 										   toastOid,
 										   InvalidOid,
 										   InvalidOid,
@@ -266,7 +267,8 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 										   true,
 										   true,
 										   OIDOldToast,
-										   NULL);
+										   NULL,
+										   false);
 	Assert(toast_relid != InvalidOid);
 
 	/* make the toast relation visible, else table_open will fail */
@@ -310,7 +312,7 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 	indexInfo->ii_ParallelWorkers = 0;
 	indexInfo->ii_Am = BTREE_AM_OID;
 	indexInfo->ii_AmCache = NULL;
-	indexInfo->ii_Context = CurrentMemoryContext;
+	indexInfo->ii_Context = GetCurrentMemoryContext();
 
 	collationObjectId[0] = InvalidOid;
 	collationObjectId[1] = InvalidOid;
@@ -328,7 +330,9 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 				 BTREE_AM_OID,
 				 rel->rd_rel->reltablespace,
 				 collationObjectId, classObjectId, coloptions, (Datum) 0,
-				 INDEX_CREATE_IS_PRIMARY, 0, true, true, NULL);
+				 INDEX_CREATE_IS_PRIMARY, 0, true, true, NULL, NULL,
+				 true /* skip_index_backfill */, false /* is_colocated */,
+				 InvalidOid /* tablegroupId */, InvalidOid /* colocationId */);
 
 	table_close(toast_rel, NoLock);
 
@@ -351,7 +355,7 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 	else
 	{
 		/* While bootstrapping, we cannot UPDATE, so overwrite in-place */
-		heap_inplace_update(class_rel, reltup);
+		heap_inplace_update(class_rel, reltup, false /* yb_shared_update */);
 	}
 
 	heap_freetuple(reltup);

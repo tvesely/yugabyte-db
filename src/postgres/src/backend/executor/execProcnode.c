@@ -119,6 +119,11 @@
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
 
+/* Yugabyte includes */
+#include "executor/nodeYbBatchedNestloop.h"
+#include "executor/nodeYbSeqscan.h"
+#include "pg_yb_utils.h"
+
 static TupleTableSlot *ExecProcNodeFirst(PlanState *node);
 static TupleTableSlot *ExecProcNodeInstr(PlanState *node);
 static bool ExecShutdownNode_walker(PlanState *node, void *context);
@@ -211,6 +216,11 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 												   estate, eflags);
 			break;
 
+		case T_YbSeqScan:
+			result = (PlanState *) ExecInitYbSeqScan((YbSeqScan *) node,
+													 estate, eflags);
+			break;
+
 		case T_SampleScan:
 			result = (PlanState *) ExecInitSampleScan((SampleScan *) node,
 													  estate, eflags);
@@ -297,6 +307,12 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 		case T_NestLoop:
 			result = (PlanState *) ExecInitNestLoop((NestLoop *) node,
 													estate, eflags);
+			break;
+
+		case T_YbBatchedNestLoop:
+			result = (PlanState *) ExecInitYbBatchedNestLoop(
+				(YbBatchedNestLoop *) node,
+				estate, eflags);
 			break;
 
 		case T_MergeJoin:
@@ -464,7 +480,6 @@ ExecProcNodeFirst(PlanState *node)
 	return node->ExecProcNode(node);
 }
 
-
 /*
  * ExecProcNode wrapper that performs instrumentation calls.  By keeping
  * this a separate function, we avoid overhead in the normal case where
@@ -480,6 +495,7 @@ ExecProcNodeInstr(PlanState *node)
 	result = node->ExecProcNodeReal(node);
 
 	InstrStopNode(node->instrument, TupIsNull(result) ? 0.0 : 1.0);
+	YbUpdateSessionStats(&node->instrument->yb_instr);
 
 	return result;
 }
@@ -619,6 +635,10 @@ ExecEndNode(PlanState *node)
 			ExecEndSeqScan((SeqScanState *) node);
 			break;
 
+		case T_YbSeqScanState:
+			ExecEndYbSeqScan((YbSeqScanState *) node);
+			break;
+
 		case T_SampleScanState:
 			ExecEndSampleScan((SampleScanState *) node);
 			break;
@@ -696,6 +716,10 @@ ExecEndNode(PlanState *node)
 			 */
 		case T_NestLoopState:
 			ExecEndNestLoop((NestLoopState *) node);
+			break;
+
+		case T_YbBatchedNestLoopState:
+			ExecEndYbBatchedNestLoop((YbBatchedNestLoopState *) node);
 			break;
 
 		case T_MergeJoinState:

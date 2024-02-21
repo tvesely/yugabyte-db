@@ -25,6 +25,12 @@ struct IndexPath;
 /* Likewise, this file shouldn't depend on execnodes.h. */
 struct IndexInfo;
 
+/*
+ * BACKFILL input and output nodes.
+ * As above, avoiding dependencies on execnodes.h and parsenodes.h.
+ */
+struct YbBackfillInfo;
+struct YbPgExecOutParam;
 
 /*
  * Properties for amproperty API.  This list covers properties known to the
@@ -112,6 +118,38 @@ typedef bool (*aminsert_function) (Relation indexRelation,
 								   IndexUniqueCheck checkUnique,
 								   bool indexUnchanged,
 								   struct IndexInfo *indexInfo);
+
+/* alternate insert callback for YugaByte-based index that passs ybctid instead of ctid */
+typedef bool (*yb_aminsert_function) (Relation indexRelation,
+									  Datum *values,
+									  bool *isnull,
+									  ItemPointer heap_tid, /* contains ybctid */
+									  Relation heapRelation,
+									  IndexUniqueCheck checkUnique,
+									  struct IndexInfo *indexInfo,
+									  bool shared_insert);
+
+/* delete this tuple for YugaByte-based index */
+typedef void (*yb_amdelete_function) (Relation indexRelation,
+									  Datum *values,
+									  bool *isnull,
+									  Datum ybctid,
+									  Relation heapRelation,
+									  struct IndexInfo *indexInfo);
+
+/* backfill this Yugabyte-based index */
+typedef IndexBuildResult *(*yb_ambackfill_function) (Relation heapRelation,
+													 Relation indexRelation,
+													 struct IndexInfo *indexInfo,
+													 struct YbBackfillInfo *bfinfo,
+													 struct YbPgExecOutParam *bfresult);
+
+/* return whether this Yugabyte-based index might recheck indexquals */
+typedef bool (*yb_ammightrecheck_function) (Relation heap,
+											Relation index,
+											bool xs_want_itup,
+											ScanKey keys,
+											int nkeys);
 
 /* bulk delete */
 typedef IndexBulkDeleteResult *(*ambulkdelete_function) (IndexVacuumInfo *info,
@@ -280,6 +318,13 @@ typedef struct IndexAmRoutine
 	amestimateparallelscan_function amestimateparallelscan; /* can be NULL */
 	aminitparallelscan_function aminitparallelscan; /* can be NULL */
 	amparallelrescan_function amparallelrescan; /* can be NULL */
+
+	/* interface functions to support Yugabyte indexes */
+	yb_aminsert_function yb_aminsert;
+	yb_amdelete_function yb_amdelete;
+	yb_ambackfill_function yb_ambackfill;
+	yb_ammightrecheck_function yb_ammightrecheck;
+
 } IndexAmRoutine;
 
 

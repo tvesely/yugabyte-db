@@ -34,10 +34,21 @@ extern List *transformCreateSchemaStmt(CreateSchemaStmt *stmt);
 extern PartitionBoundSpec *transformPartitionBound(ParseState *pstate, Relation parent,
 												   PartitionBoundSpec *spec);
 extern List *expandTableLikeClause(RangeVar *heapRel,
-								   TableLikeClause *table_like_clause);
+								   TableLikeClause *table_like_clause,
+								   List **yb_constraints);
 extern IndexStmt *generateClonedIndexStmt(RangeVar *heapRel,
 										  Relation source_idx,
 										  const struct AttrMap *attmap,
 										  Oid *constraintOid);
+
+extern CreateStatsStmt *YbGenerateClonedExtStatsStmt(RangeVar *heapRel,
+													 Oid heapRelid,
+													 Oid source_statsid);
+extern void YBTransformPartitionSplitValue(ParseState *pstate,
+										   List *split_point,
+										   Form_pg_attribute *attrs,
+										   int attr_count,
+										   PartitionRangeDatum **datums,
+										   int *datum_count);
 
 #endif							/* PARSE_UTILCMD_H */

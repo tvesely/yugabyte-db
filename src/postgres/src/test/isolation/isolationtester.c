@@ -75,6 +75,9 @@ static void printResultSet(PGresult *res);
 static void isotesterNoticeProcessor(void *arg, const char *message);
 static void blackholeNoticeProcessor(void *arg, const char *message);
 
+/* This is YB specific logic. See usage for description */
+#define YB_NUM_SECONDS_TO_WAIT_TO_ASSUME_SESSION_BLOCKED 4
+
 static void
 disconnect_atexit(void)
 {
@@ -138,6 +141,9 @@ main(int argc, char **argv)
 	/* Read the test spec from stdin */
 	spec_yyparse();
 	testspec = &parseresult;
+
+	/* Release the scanner memory */
+	spec_scanner_finish();
 
 	/* Perform post-parse checking, and fill in linking fields */
 	check_testspec(testspec);
@@ -936,6 +942,22 @@ try_complete_step(TestSpec *testspec, PermutationStep *pstep, int flags)
 			td = (int64) current_time.tv_sec - (int64) start_time.tv_sec;
 			td *= USECS_PER_SEC;
 			td += (int64) current_time.tv_usec - (int64) start_time.tv_usec;
+
+			/* Yugabyte specific logic:
+			 *   Since we don't use pg_locks, we can't determine if a session is blocked on another
+			 *   session using the PREP_WAITING function above. So, we instead assume that waiting for
+			 *   for >= 2 second means the session is blocked on another session.
+			 *
+			 *   This is not a perfect check but good enough for now.
+			 *
+			 *   TODO(Piyush): Replace this by a deterministic check when blocking information is exposed
+			 *   via Pg locks (#12168).
+			 */
+			if (td > YB_NUM_SECONDS_TO_WAIT_TO_ASSUME_SESSION_BLOCKED * USECS_PER_SEC && !canceled) {
+					if (!(flags & STEP_RETRY))
+						printf("step %s: %s <waiting ...>\n", step->name, step->sql);
+					return true;
+			}
 
 			/*
 			 * After max_step_wait microseconds, try to cancel the query.

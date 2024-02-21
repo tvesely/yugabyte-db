@@ -12,6 +12,21 @@
  * in any error message about one of them, so don't do that.  Also, you
  * cannot write a semicolon immediately followed by an empty line in a
  * string literal (including a function body!) or a multiline comment.
+ *
+ * Portions Copyright (c) YugabyteDB, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you
+ * may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+ * implied.  See the License for the specific language governing
+ * permissions and limitations under the License.
+
  */
 
 CREATE VIEW pg_roles AS
@@ -382,7 +397,37 @@ CREATE VIEW pg_publication_tables AS
     WHERE C.oid = GPT.relid;
 
 CREATE VIEW pg_locks AS
-    SELECT * FROM pg_lock_status() AS L;
+SELECT l.locktype,
+       l.database,
+       l.relation,
+       null::int                  AS page,
+       null::smallint             AS tuple,
+       null::text                 AS virtualxid,
+       null::xid                  AS transactionid,
+       null::oid                  AS classid,
+       null::oid                  AS objid,
+       null::smallint             AS objsubid,
+       null::text                 AS virtualtransaction,
+       l.pid,
+       array_to_string(mode, ',') AS mode,
+       l.granted,
+       l.fastpath,
+       l.waitstart,
+       l.waitend,
+       jsonb_build_object('node', l.node,
+                          'transactionid', l.transaction_id,
+                          'subtransaction_id', l.subtransaction_id,
+                          'is_explicit', l.is_explicit,
+                          'tablet_id', l.tablet_id,
+                          'blocked_by', l.blocked_by,
+                          'keyrangedetails', jsonb_build_object(
+                                  'cols', to_jsonb(l.hash_cols || l.range_cols),
+                                  'attnum', l.attnum,
+                                  'column_id', l.column_id,
+                                  'multiple_rows_locked', l.multiple_rows_locked
+                              )
+           )                      AS ybdetails
+FROM yb_lock_status(null, null) AS l;
 
 CREATE VIEW pg_cursors AS
     SELECT * FROM pg_cursor() AS C;
@@ -860,13 +905,19 @@ CREATE VIEW pg_stat_activity AS
             S.wait_event,
             S.state,
             S.backend_xid,
-            s.backend_xmin,
+            S.backend_xmin,
             S.query_id,
             S.query,
-            S.backend_type
+            S.backend_type,
+            yb_pg_stat_get_backend_catalog_version(B.beid) AS catalog_version,
+            yb_pg_stat_get_backend_allocated_mem_bytes(B.beid) AS allocated_mem_bytes,
+            yb_pg_stat_get_backend_rss_mem_bytes(B.beid) AS rss_mem_bytes,
+            S.yb_backend_xid
     FROM pg_stat_get_activity(NULL) AS S
         LEFT JOIN pg_database AS D ON (S.datid = D.oid)
-        LEFT JOIN pg_authid AS U ON (S.usesysid = U.oid);
+        LEFT JOIN pg_authid AS U ON (S.usesysid = U.oid)
+        LEFT JOIN (pg_stat_get_backend_idset() beid CROSS JOIN
+                   pg_stat_get_backend_pid(beid) pid) B ON B.pid = S.pid;
 
 CREATE VIEW pg_stat_replication AS
     SELECT
@@ -994,7 +1045,8 @@ CREATE VIEW pg_replication_slots AS
             L.confirmed_flush_lsn,
             L.wal_status,
             L.safe_wal_size,
-            L.two_phase
+            L.two_phase,
+            L.yb_stream_id
     FROM pg_get_replication_slots() AS L
             LEFT JOIN pg_database D ON (L.datoid = D.oid);
 
@@ -1198,24 +1250,14 @@ CREATE VIEW pg_stat_progress_create_index AS
         S.pid AS pid, S.datid AS datid, D.datname AS datname,
         S.relid AS relid,
         CAST(S.param7 AS oid) AS index_relid,
-        CASE S.param1 WHEN 1 THEN 'CREATE INDEX'
+        CASE S.param1 WHEN 1 THEN 'CREATE INDEX NONCONCURRENTLY'
                       WHEN 2 THEN 'CREATE INDEX CONCURRENTLY'
-                      WHEN 3 THEN 'REINDEX'
+                      WHEN 3 THEN 'REINDEX NONCONCURRENTLY'
                       WHEN 4 THEN 'REINDEX CONCURRENTLY'
                       END AS command,
         CASE S.param10 WHEN 0 THEN 'initializing'
-                       WHEN 1 THEN 'waiting for writers before build'
-                       WHEN 2 THEN 'building index' ||
-                           COALESCE((': ' || pg_indexam_progress_phasename(S.param9::oid, S.param11)),
-                                    '')
-                       WHEN 3 THEN 'waiting for writers before validation'
-                       WHEN 4 THEN 'index validation: scanning index'
-                       WHEN 5 THEN 'index validation: sorting tuples'
-                       WHEN 6 THEN 'index validation: scanning table'
-                       WHEN 7 THEN 'waiting for old snapshots'
-                       WHEN 8 THEN 'waiting for readers before marking dead'
-                       WHEN 9 THEN 'waiting for readers before dropping'
-                       END as phase,
+                       WHEN 1 THEN 'backfilling'
+                       END AS phase,
         S.param4 AS lockers_total,
         S.param5 AS lockers_done,
         S.param6 AS current_locker_pid,
@@ -1257,6 +1299,10 @@ CREATE VIEW pg_stat_progress_copy AS
                       WHEN 3 THEN 'PIPE'
                       WHEN 4 THEN 'CALLBACK'
                       END AS "type",
+        CASE S.param7 WHEN 0 THEN 'IN PROGRESS'
+                      WHEN 1 THEN 'ERROR'
+                      WHEN 2 THEN 'SUCCESS'
+                      END AS yb_status,
         S.param1 AS bytes_processed,
         S.param2 AS bytes_total,
         S.param3 AS tuples_processed,

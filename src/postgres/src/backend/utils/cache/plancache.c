@@ -57,6 +57,7 @@
 #include <limits.h>
 
 #include "access/transam.h"
+#include "access/xact.h"
 #include "catalog/namespace.h"
 #include "executor/executor.h"
 #include "miscadmin.h"
@@ -73,7 +74,10 @@
 #include "utils/rls.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
+#include "optimizer/ybcplan.h"
 
+/* Yugabyte includes */
+#include "pg_yb_utils.h"
 
 /*
  * We must skip "overhead" operations that involve database access when the
@@ -119,6 +123,18 @@ static void PlanCacheSysCallback(Datum arg, int cacheid, uint32 hashvalue);
 int			plan_cache_mode;
 
 /*
+ * For prepared statements, generate custom plans for at least the first 5 runs
+ * (arbitrary)
+ */
+int yb_test_planner_custom_plan_threshold = 5;
+
+/*
+ * Prefer custom plan over generic plan for prepared statement if more
+ * partitions are pruned using a custom plan.
+ */
+bool enable_choose_custom_plan_for_partition_pruning = true;
+
+/*
  * InitPlanCache: initialize module during InitPostgres.
  *
  * All we need to do is hook into inval.c's callback lists.
@@ -149,7 +165,7 @@ InitPlanCache(void)
  * still had a clean copy to present at plan cache creation time.
  *
  * All arguments presented to CreateCachedPlan are copied into a memory
- * context created as a child of the call-time CurrentMemoryContext, which
+ * context created as a child of the call-time GetCurrentMemoryContext(), which
  * should be a reasonably short-lived working context that will go away in
  * event of an error.  This ensures that the cached plan data structure will
  * likewise disappear if an error occurs before we have fully constructed it.
@@ -178,7 +194,7 @@ CreateCachedPlan(RawStmt *raw_parse_tree,
 	 * caller's context (which we assume to be transient), so that it will be
 	 * cleaned up on error.
 	 */
-	source_context = AllocSetContextCreate(CurrentMemoryContext,
+	source_context = AllocSetContextCreate(GetCurrentMemoryContext(),
 										   "CachedPlanSource",
 										   ALLOCSET_START_SMALL_SIZES);
 
@@ -269,7 +285,7 @@ CreateOneShotCachedPlan(RawStmt *raw_parse_tree,
 	plansource->cursor_options = 0;
 	plansource->fixed_result = false;
 	plansource->resultDesc = NULL;
-	plansource->context = CurrentMemoryContext;
+	plansource->context = GetCurrentMemoryContext();
 	plansource->query_list = NIL;
 	plansource->relationOids = NIL;
 	plansource->invalItems = NIL;
@@ -346,7 +362,7 @@ CompleteCachedPlan(CachedPlanSource *plansource,
 				   bool fixed_result)
 {
 	MemoryContext source_context = plansource->context;
-	MemoryContext oldcxt = CurrentMemoryContext;
+	MemoryContext oldcxt = GetCurrentMemoryContext();
 
 	/* Assert caller is doing things in a sane order */
 	Assert(plansource->magic == CACHEDPLANSOURCE_MAGIC);
@@ -361,7 +377,7 @@ CompleteCachedPlan(CachedPlanSource *plansource,
 	 */
 	if (plansource->is_oneshot)
 	{
-		querytree_context = CurrentMemoryContext;
+		querytree_context = GetCurrentMemoryContext();
 	}
 	else if (querytree_context != NULL)
 	{
@@ -428,6 +444,9 @@ CompleteCachedPlan(CachedPlanSource *plansource,
 	plansource->cursor_options = cursor_options;
 	plansource->fixed_result = fixed_result;
 	plansource->resultDesc = PlanCacheComputeResultDesc(querytree_list);
+
+	/* If the planner txn uses a pg relation, so will the execution txn */
+	plansource->usesPostgresRel = IsCurrentTxnWithPGRel();
 
 	MemoryContextSwitchTo(oldcxt);
 
@@ -731,7 +750,7 @@ RevalidateCachedQuery(CachedPlanSource *plansource,
 	 * Allocate new query_context and copy the completed querytree into it.
 	 * It's transient until we complete the copying and dependency extraction.
 	 */
-	querytree_context = AllocSetContextCreate(CurrentMemoryContext,
+	querytree_context = AllocSetContextCreate(GetCurrentMemoryContext(),
 											  "CachedPlanQuery",
 											  ALLOCSET_START_SMALL_SIZES);
 	oldcxt = MemoryContextSwitchTo(querytree_context);
@@ -884,7 +903,7 @@ BuildCachedPlan(CachedPlanSource *plansource, List *qlist,
 	bool		snapshot_set;
 	bool		is_transient;
 	MemoryContext plan_context;
-	MemoryContext oldcxt = CurrentMemoryContext;
+	MemoryContext oldcxt = GetCurrentMemoryContext();
 	ListCell   *lc;
 
 	/*
@@ -947,7 +966,7 @@ BuildCachedPlan(CachedPlanSource *plansource, List *qlist,
 	 */
 	if (!plansource->is_oneshot)
 	{
-		plan_context = AllocSetContextCreate(CurrentMemoryContext,
+		plan_context = AllocSetContextCreate(GetCurrentMemoryContext(),
 											 "CachedPlan",
 											 ALLOCSET_START_SMALL_SIZES);
 		MemoryContextCopyAndSetIdentifier(plan_context, plansource->query_string);
@@ -960,7 +979,7 @@ BuildCachedPlan(CachedPlanSource *plansource, List *qlist,
 		plist = copyObject(plist);
 	}
 	else
-		plan_context = CurrentMemoryContext;
+		plan_context = GetCurrentMemoryContext();
 
 	/*
 	 * Create and fill the CachedPlan struct within the new context.
@@ -1043,11 +1062,38 @@ choose_custom_plan(CachedPlanSource *plansource, ParamListInfo boundParams)
 	if (plansource->cursor_options & CURSOR_OPT_CUSTOM_PLAN)
 		return true;
 
-	/* Generate custom plans until we have done at least 5 (arbitrary) */
-	if (plansource->num_custom_plans < 5)
+	/*
+	 * Generate custom plans until we have done at least
+	 * 'yb_test_planner_custom_plan_threshold' runs.
+	 */
+	if (plansource->num_custom_plans < yb_test_planner_custom_plan_threshold)
 		return true;
 
+	/* For single row modify operations, use a custom plan so as to push down
+	 * the update to the DocDB without performing the read. This involves
+	 * faking the read results in postgres. However the boundParams needs to be
+	 * passed for the creation of the plan and hence we would need to enforce a
+	 * custom plan.
+	 */
+	if (plansource->gplan && list_length(plansource->gplan->stmt_list)) {
+		PlannedStmt *pstmt =
+			linitial_node(PlannedStmt, plansource->gplan->stmt_list);
+		if (YBCIsSingleRowModify(pstmt)) {
+			return true;
+		}
+	}
+
 	avg_custom_cost = plansource->total_custom_cost / plansource->num_custom_plans;
+
+	/*
+	 * If generic plan is present, then choose custom plan if partition pruning
+	 * or constraint exclusion has pruned more relations for custom plan over
+	 * generic plan.
+	 */
+	if (enable_choose_custom_plan_for_partition_pruning && plansource->gplan &&
+		plansource->yb_custom_max_num_referenced_rels <
+			plansource->yb_generic_num_referenced_rels)
+		return true;
 
 	/*
 	 * Prefer generic plan if it's less expensive than the average custom
@@ -1063,6 +1109,23 @@ choose_custom_plan(CachedPlanSource *plansource, ParamListInfo boundParams)
 		return false;
 
 	return true;
+}
+
+/*
+ * num_referenced_relations: Return number of relations referenced by a plan.
+ */
+static int
+num_referenced_relations(CachedPlan *plan)
+{
+	ListCell   *lc1;
+	int nrelations = 0;
+	foreach(lc1, plan->stmt_list)
+	{
+		PlannedStmt *plannedstmt = lfirst_node(PlannedStmt, lc1);
+		nrelations += plannedstmt->yb_num_referenced_relations;
+	}
+
+	return nrelations;
 }
 
 /*
@@ -1190,6 +1253,8 @@ GetCachedPlan(CachedPlanSource *plansource, ParamListInfo boundParams,
 			}
 			/* Update generic_cost whenever we make a new generic plan */
 			plansource->generic_cost = cached_plan_cost(plan, false);
+			plansource->yb_generic_num_referenced_rels =
+				num_referenced_relations(plan);
 
 			/*
 			 * If, based on the now-known value of generic_cost, we'd not have
@@ -1219,6 +1284,21 @@ GetCachedPlan(CachedPlanSource *plansource, ParamListInfo boundParams,
 		plansource->total_custom_cost += cached_plan_cost(plan, true);
 
 		plansource->num_custom_plans++;
+		if (IsYugaByteEnabled()) {
+			/*
+			 * Store the maximum number of relations referenced across all
+			 * the runs using custom plan. In Yugabyte clusters, higher the
+			 * number of relations referenced by a plan, higher the number
+			 * of RPCs required to fetch the data across these relations. This
+			 * mostly comes into play when using partitioned tables, where
+			 * the number of pruned partitions can be a huge performance
+			 * factor.
+			 */
+			int nrelations = num_referenced_relations(plan);
+			if (plansource->num_custom_plans == 1 ||
+				plansource->yb_custom_max_num_referenced_rels < nrelations)
+				plansource->yb_custom_max_num_referenced_rels = nrelations;
+		}
 	}
 	else
 	{
@@ -1521,7 +1601,7 @@ CopyCachedPlan(CachedPlanSource *plansource)
 	if (plansource->is_oneshot)
 		elog(ERROR, "cannot copy a one-shot cached plan");
 
-	source_context = AllocSetContextCreate(CurrentMemoryContext,
+	source_context = AllocSetContextCreate(GetCurrentMemoryContext(),
 										   "CachedPlanSource",
 										   ALLOCSET_START_SMALL_SIZES);
 

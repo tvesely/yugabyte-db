@@ -1107,7 +1107,7 @@ match_network_subset(Node *leftop,
 	 * do the wrong thing if someone were to make a reverse-sort opfamily with
 	 * the same operators.
 	 */
-	if (opfamily != NETWORK_BTREE_FAM_OID)
+	if (opfamily != NETWORK_BTREE_FAM_OID && opfamily != NETWORK_LSM_FAM_OID)
 		return NIL;
 
 	/*

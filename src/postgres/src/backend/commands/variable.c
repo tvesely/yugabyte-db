@@ -33,6 +33,9 @@
 #include "utils/timestamp.h"
 #include "utils/varlena.h"
 
+/* Yugabyte includes */
+#include "pg_yb_utils.h"
+
 /*
  * DATESTYLE
  */
@@ -513,6 +516,16 @@ check_transaction_read_only(bool *newval, void **extra, GucSource source)
 	return true;
 }
 
+void
+assign_transaction_read_only(bool newval, void *extra)
+{
+	XactReadOnly = newval;
+	if (YBTransactionsEnabled())
+	{
+		HandleYBStatus(YBCPgSetTransactionReadOnly(XactReadOnly));
+	}
+}
+
 /*
  * SET TRANSACTION ISOLATION LEVEL
  *
@@ -554,6 +567,65 @@ check_XactIsoLevel(int *newval, void **extra, GucSource source)
 	return true;
 }
 
+void
+yb_assign_XactIsoLevel(int newval, void *extra)
+{
+	XactIsoLevel = newval;
+	if (YBTransactionsEnabled())
+	{
+		HandleYBStatus(
+			YBCPgSetTransactionIsolationLevel(YBGetEffectivePggateIsolationLevel()));
+	}
+}
+
+const char *
+yb_fetch_effective_transaction_isolation_level(void)
+{
+	switch (XactIsoLevel)
+	{
+		case XACT_READ_UNCOMMITTED:
+			switch_fallthrough();
+		case XACT_READ_COMMITTED:
+			if (IsYBReadCommitted())
+				return "read committed";
+			switch_fallthrough();
+		case XACT_REPEATABLE_READ:
+			return "repeatable read";
+		case XACT_SERIALIZABLE:
+			return "serializable";
+		default:
+			return "bogus";
+	}
+}
+
+bool is_staleness_acceptable(int32_t staleness_ms) {
+	int32_t max_clock_skew_usec = YBGetMaxClockSkewUsec();
+	const int kMargin = 2;
+	if (staleness_ms * 1000 < kMargin * max_clock_skew_usec) {
+		GUC_check_errcode(ERRCODE_FEATURE_NOT_SUPPORTED);
+		GUC_check_errmsg("cannot enable yb_read_from_followers with a staleness of less than "
+						"%d * (max_clock_skew = %d usec)", kMargin, max_clock_skew_usec);
+		return false;
+	}
+	return true;
+}
+
+bool
+check_follower_reads(bool *newval, void **extra, GucSource source) {
+	if (*newval == false) {
+		return true;
+	}
+	return is_staleness_acceptable(yb_follower_read_staleness_ms);
+}
+
+bool
+check_follower_read_staleness_ms(int32_t *newval, void **extra, GucSource source) {
+	if (!YBReadFromFollowersEnabled()) {
+		return true;
+	}
+	return is_staleness_acceptable(*newval);
+}
+
 /*
  * SET TRANSACTION [NOT] DEFERRABLE
  */
@@ -575,6 +647,16 @@ check_transaction_deferrable(bool *newval, void **extra, GucSource source)
 	}
 
 	return true;
+}
+
+void
+assign_transaction_deferrable(bool newval, void *extra)
+{
+  XactDeferrable = newval;
+	if (YBTransactionsEnabled())
+	{
+		HandleYBStatus(YBCPgSetTransactionDeferrable(XactDeferrable));
+	}
 }
 
 /*

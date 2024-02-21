@@ -31,6 +31,8 @@
 #include "utils/hsearch.h"
 #include "utils/lsyscache.h"
 
+#include "partitioning/partbounds.h"
+#include "pg_yb_utils.h"
 
 typedef struct JoinHashEntry
 {
@@ -406,7 +408,7 @@ build_join_rel_hash(PlannerInfo *root)
 	hash_ctl.entrysize = sizeof(JoinHashEntry);
 	hash_ctl.hash = bitmap_hash;
 	hash_ctl.match = bitmap_match;
-	hash_ctl.hcxt = CurrentMemoryContext;
+	hash_ctl.hcxt = GetCurrentMemoryContext();
 	hashtab = hash_create("JoinRelHashTable",
 						  256L,
 						  &hash_ctl,
@@ -1302,6 +1304,7 @@ get_baserel_parampathinfo(PlannerInfo *root, RelOptInfo *baserel,
 	List	   *pclauses;
 	double		rows;
 	ListCell   *lc;
+	Relids		batchedrelids = root->yb_cur_batched_relids;
 
 	/* If rel has LATERAL refs, every path for it should account for them */
 	Assert(bms_is_subset(baserel->lateral_relids, required_outer));
@@ -1312,9 +1315,19 @@ get_baserel_parampathinfo(PlannerInfo *root, RelOptInfo *baserel,
 
 	Assert(!bms_overlap(baserel->relids, required_outer));
 
-	/* If we already have a PPI for this parameterization, just return it */
-	if ((ppi = find_param_path_info(baserel, required_outer)))
-		return ppi;
+	if (IsYugaByteEnabled())
+	{
+		if ((ppi =
+			 yb_find_batched_param_path_info(baserel,
+											 required_outer,
+											 batchedrelids)))
+			return ppi;
+	}
+	else
+	{
+		if ((ppi = find_param_path_info(baserel, required_outer)))
+			return ppi;
+	}
 
 	/*
 	 * Identify all joinclauses that are movable to this base rel given this
@@ -1329,7 +1342,9 @@ get_baserel_parampathinfo(PlannerInfo *root, RelOptInfo *baserel,
 		if (join_clause_is_movable_into(rinfo,
 										baserel->relids,
 										joinrelids))
+		{
 			pclauses = lappend(pclauses, rinfo);
+		}
 	}
 
 	/*
@@ -1342,14 +1357,32 @@ get_baserel_parampathinfo(PlannerInfo *root, RelOptInfo *baserel,
 															required_outer,
 															baserel));
 
-	/* Estimate the number of rows returned by the parameterized scan */
-	rows = get_parameterized_baserel_size(root, baserel, pclauses);
+	List *sel_clauses = pclauses;
+	if (!bms_is_empty(batchedrelids) && yb_enable_base_scans_cost_model)
+	{
+		List *new_pclauses = NIL;
+		foreach (lc, pclauses)
+		{
+			RestrictInfo *rinfo = (RestrictInfo *) lfirst(lc);
+			RestrictInfo *batched =
+				yb_get_batched_restrictinfo(rinfo, batchedrelids, baserel->relids);
+			if (batched)
+				rinfo = batched;
 
+			new_pclauses = lappend(new_pclauses, rinfo);
+		}
+		sel_clauses = new_pclauses;
+	}
+
+	/* Estimate the number of rows returned by the parameterized scan */
+	rows = get_parameterized_baserel_size(root, baserel, sel_clauses);
 	/* And now we can build the ParamPathInfo */
 	ppi = makeNode(ParamPathInfo);
 	ppi->ppi_req_outer = required_outer;
 	ppi->ppi_rows = rows;
 	ppi->ppi_clauses = pclauses;
+	ppi->yb_ppi_req_outer_batched = batchedrelids;
+
 	baserel->ppilist = lappend(baserel->ppilist, ppi);
 
 	return ppi;
@@ -1409,6 +1442,18 @@ get_joinrel_parampathinfo(PlannerInfo *root, RelOptInfo *joinrel,
 		return NULL;
 
 	Assert(!bms_overlap(joinrel->relids, required_outer));
+
+	/* Compute batched and unbatched relids. */
+	Relids req_batchedids = bms_union(YB_PATH_REQ_OUTER_BATCHED(outer_path),
+									  YB_PATH_REQ_OUTER_BATCHED(inner_path));
+
+	Relids req_unbatchedids =
+		bms_union(YB_PATH_REQ_OUTER_UNBATCHED(outer_path),
+				  YB_PATH_REQ_OUTER_UNBATCHED(inner_path));
+
+	req_batchedids = bms_difference(req_batchedids,
+											  req_unbatchedids);
+	req_batchedids = bms_difference(req_batchedids, outer_path->parent->relids);
 
 	/*
 	 * Identify all joinclauses that are movable to this join rel given this
@@ -1546,6 +1591,41 @@ get_joinrel_parampathinfo(PlannerInfo *root, RelOptInfo *joinrel,
 		}
 	}
 
+	if (IsYugaByteEnabled() && !bms_is_empty(req_batchedids))
+	{
+		/*
+		 * YB: TODO: This can be omitted if we allow join filters to be batched
+		 * IN clauses. Consider a join for (X (Y Z)) with a filter Fxy between
+		 * X and Y. If this filter is applied at the lower join then batching
+		 * X becomes impossible if Fxy is not converted into an IN clause.
+		 * This same logic can be applied to any mergejoinable qpqual within
+		 * a batched join context.
+		 */
+		foreach(lc, pclauses)
+		{
+			RestrictInfo *rinfo = (RestrictInfo *) lfirst(lc);
+			/*
+			 * YB: If outer/inner path has a relevant pclause that requires
+			 * external relids that are not in
+			 * outer/inner_batchedrelids
+			 * then those external relids need to be unbatched.
+			 */
+			if (bms_is_subset(rinfo->clause_relids, joinrel->relids))
+				continue;
+
+			if (bms_overlap(rinfo->clause_relids, req_batchedids))
+			{
+				Relids unbatched_ext_rels =
+					bms_difference(rinfo->clause_relids, joinrel->relids);
+
+				req_unbatchedids =
+					bms_union(req_unbatchedids, unbatched_ext_rels);
+			}
+		}
+	}
+
+	req_batchedids = bms_difference(req_batchedids, req_unbatchedids);
+
 	/*
 	 * Now, attach the identified moved-down clauses to the caller's
 	 * restrict_clauses list.  By using list_concat in this order, we leave
@@ -1554,7 +1634,9 @@ get_joinrel_parampathinfo(PlannerInfo *root, RelOptInfo *joinrel,
 	*restrict_clauses = list_concat(pclauses, *restrict_clauses);
 
 	/* If we already have a PPI for this parameterization, just return it */
-	if ((ppi = find_param_path_info(joinrel, required_outer)))
+	if ((ppi = yb_find_batched_param_path_info(joinrel,
+											   required_outer,
+											   req_batchedids)))
 		return ppi;
 
 	/* Estimate the number of rows returned by the parameterized join */
@@ -1575,9 +1657,33 @@ get_joinrel_parampathinfo(PlannerInfo *root, RelOptInfo *joinrel,
 	ppi->ppi_req_outer = required_outer;
 	ppi->ppi_rows = rows;
 	ppi->ppi_clauses = NIL;
+
+	ppi->yb_ppi_req_outer_batched = req_batchedids;
+
 	joinrel->ppilist = lappend(joinrel->ppilist, ppi);
 
 	return ppi;
+}
+
+bool
+yb_has_same_batching_reqs(List *paths)
+{
+	Path *first_path = (Path *) linitial(paths);
+	Relids first_req_outer_batch = YB_PATH_REQ_OUTER_BATCHED(first_path);
+	Relids first_req_outer = PATH_REQ_OUTER(first_path);
+	ListCell *lc;
+	foreach(lc, paths)
+	{
+		Path *path = (Path *) lfirst(lc);
+
+		if (!bms_equal(first_req_outer_batch, YB_PATH_REQ_OUTER_BATCHED(path)))
+			return false;
+
+		if (!bms_equal(first_req_outer, PATH_REQ_OUTER(path)))
+			return false;
+	}
+
+	return true;
 }
 
 /*
@@ -1616,6 +1722,25 @@ get_appendrel_parampathinfo(RelOptInfo *appendrel, Relids required_outer)
 	appendrel->ppilist = lappend(appendrel->ppilist, ppi);
 
 	return ppi;
+}
+
+ParamPathInfo *
+yb_find_batched_param_path_info(RelOptInfo *rel, Relids required_outer,
+					 					  Relids yb_required_batched_outer)
+{
+	ListCell   *lc;
+
+	foreach(lc, rel->ppilist)
+	{
+		ParamPathInfo *ppi = (ParamPathInfo *) lfirst(lc);
+
+		if (bms_equal(ppi->ppi_req_outer, required_outer) &&
+			 bms_equal(ppi->yb_ppi_req_outer_batched,
+						  yb_required_batched_outer))
+			return ppi;
+	}
+
+	return NULL;
 }
 
 /*

@@ -77,6 +77,12 @@ OBJS = \
 	nodeWorktablescan.o \
 	spi.o \
 	tqueue.o \
-	tstoreReceiver.o
+	tstoreReceiver.o \
+	ybcExpr.o \
+	ybcFunction.o \
+	ybc_fdw.o \
+	ybcModifyTable.o \
+    nodeYbBatchedNestloop.o \
+    nodeYbSeqscan.o
 
 include $(top_srcdir)/src/backend/common.mk

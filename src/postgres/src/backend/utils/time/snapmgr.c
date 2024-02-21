@@ -71,6 +71,8 @@
 #include "utils/syscache.h"
 #include "utils/timestamp.h"
 
+/* Yugabyte includes */
+#include "pg_yb_utils.h"
 
 /*
  * GUC parameters
@@ -312,6 +314,26 @@ GetTransactionSnapshot(void)
 	InvalidateCatalogSnapshot();
 
 	CurrentSnapshot = GetSnapshotData(&CurrentSnapshotData);
+
+	/*
+	 * YB: We have to RESET read point in YSQL for READ COMMITTED isolation level.
+	 * A read point is analogous to the snapshot in PostgreSQL.
+	 *
+	 * We also need to flush all earlier operations so that they complete on the
+	 * previous snapshot.
+	 *
+	 * READ COMMITTED semantics don't apply to DDLs.
+	 */
+	if (IsYBReadCommitted() && !YBCPgIsDdlMode())
+	{
+		HandleYBStatus(YBCPgFlushBufferedOperations());
+		/* If this is a retry for a kReadRestart error, avoid resetting the read point */
+		if (!YBCIsRestartReadPointRequested())
+		{
+			elog(DEBUG2, "Resetting read point for statement in Read Committed txn");
+			HandleYBStatus(YBCPgResetTransactionReadPoint());
+		}
+	}
 
 	return CurrentSnapshot;
 }
@@ -793,6 +815,12 @@ PopActiveSnapshot(void)
 		OldestActiveSnapshot = NULL;
 
 	SnapshotResetXmin();
+}
+
+void
+PopAllActiveSnapshots() {
+	while (ActiveSnapshot)
+		PopActiveSnapshot();
 }
 
 /*

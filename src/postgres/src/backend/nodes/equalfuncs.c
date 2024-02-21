@@ -187,6 +187,13 @@ _equalVar(const Var *a, const Var *b)
 }
 
 static bool
+_equalYbBatchedExpr(const YbBatchedExpr *a, const YbBatchedExpr *b)
+{
+	COMPARE_NODE_FIELD(orig_expr);
+	return true;
+}
+
+static bool
 _equalConst(const Const *a, const Const *b)
 {
 	COMPARE_SCALAR_FIELD(consttype);
@@ -1313,8 +1320,10 @@ _equalCreateStmt(const CreateStmt *a, const CreateStmt *b)
 	COMPARE_NODE_FIELD(options);
 	COMPARE_SCALAR_FIELD(oncommit);
 	COMPARE_STRING_FIELD(tablespacename);
+	COMPARE_STRING_FIELD(tablegroupname);
 	COMPARE_STRING_FIELD(accessMethod);
 	COMPARE_SCALAR_FIELD(if_not_exists);
+	COMPARE_NODE_FIELD(split_options);
 
 	return true;
 }
@@ -1893,6 +1902,32 @@ _equalDiscardStmt(const DiscardStmt *a, const DiscardStmt *b)
 {
 	COMPARE_SCALAR_FIELD(target);
 
+	return true;
+}
+
+static bool
+_equalCreateProfileStmt(const YbCreateProfileStmt *a, const YbCreateProfileStmt *b)
+{
+	COMPARE_STRING_FIELD(prfname);
+	COMPARE_SCALAR_FIELD(prffailedloginattempts);
+	return true;
+}
+
+static bool
+_equalDropProfileStmt(const YbDropProfileStmt *a, const YbDropProfileStmt *b)
+{
+	COMPARE_STRING_FIELD(prfname);
+	COMPARE_SCALAR_FIELD(missing_ok);
+	return true;
+}
+
+static bool
+_equalCreateTableGroupStmt(const CreateTableGroupStmt *a, const CreateTableGroupStmt *b)
+{
+	COMPARE_STRING_FIELD(tablegroupname);
+	COMPARE_STRING_FIELD(tablespacename);
+	COMPARE_NODE_FIELD(owner);
+	COMPARE_NODE_FIELD(options);
 	return true;
 }
 
@@ -2756,6 +2791,7 @@ _equalConstraint(const Constraint *a, const Constraint *b)
 	COMPARE_SCALAR_FIELD(old_pktable_oid);
 	COMPARE_SCALAR_FIELD(skip_validation);
 	COMPARE_SCALAR_FIELD(initially_valid);
+	COMPARE_NODE_FIELD(yb_index_params);
 
 	return true;
 }
@@ -3215,6 +3251,42 @@ _equalBitString(const BitString *a, const BitString *b)
 	return true;
 }
 
+static bool
+_equalBackfillIndexStmt(const BackfillIndexStmt *a, const BackfillIndexStmt *b)
+{
+	COMPARE_SCALAR_FIELD(oid_list);
+	COMPARE_NODE_FIELD(bfinfo);
+	return true;
+}
+
+static bool
+_equalYbBackfillInfo(const YbBackfillInfo *a, const YbBackfillInfo *b)
+{
+	COMPARE_STRING_FIELD(bfinstr);
+	COMPARE_SCALAR_FIELD(read_time);
+	COMPARE_NODE_FIELD(row_bounds);
+	return true;
+}
+
+static bool
+_equalRowBounds(const RowBounds *a, const RowBounds *b)
+{
+	COMPARE_STRING_FIELD(partition_key);
+	COMPARE_STRING_FIELD(row_key_start);
+	COMPARE_STRING_FIELD(row_key_end);
+	return true;
+}
+
+static bool
+_equalYbExprColrefDesc(const YbExprColrefDesc *a, const YbExprColrefDesc *b)
+{
+	COMPARE_SCALAR_FIELD(attno);
+	COMPARE_SCALAR_FIELD(typid);
+	COMPARE_SCALAR_FIELD(typmod);
+	COMPARE_SCALAR_FIELD(collid);
+	return true;
+}
+
 /*
  * equal
  *	  returns whether two nodes are equal
@@ -3261,6 +3333,9 @@ equal(const void *a, const void *b)
 			break;
 		case T_Var:
 			retval = _equalVar(a, b);
+			break;
+		case T_YbBatchedExpr:
+			retval = _equalYbBatchedExpr(a, b);
 			break;
 		case T_Const:
 			retval = _equalConst(a, b);
@@ -3683,6 +3758,15 @@ equal(const void *a, const void *b)
 		case T_DiscardStmt:
 			retval = _equalDiscardStmt(a, b);
 			break;
+		case T_YbCreateProfileStmt:
+			retval = _equalCreateProfileStmt(a, b);
+			break;
+		case T_YbDropProfileStmt:
+			retval = _equalDropProfileStmt(a, b);
+			break;
+		case T_CreateTableGroupStmt:
+			retval = _equalCreateTableGroupStmt(a, b);
+			break;
 		case T_CreateTableSpaceStmt:
 			retval = _equalCreateTableSpaceStmt(a, b);
 			break;
@@ -3988,6 +4072,19 @@ equal(const void *a, const void *b)
 			break;
 		case T_PublicationTable:
 			retval = _equalPublicationTable(a, b);
+			break;
+		case T_BackfillIndexStmt:
+			retval = _equalBackfillIndexStmt(a, b);
+			break;
+		case T_YbBackfillInfo:
+			retval = _equalYbBackfillInfo(a, b);
+			break;
+		case T_RowBounds:
+			retval = _equalRowBounds(a, b);
+			break;
+
+		case T_YbExprColrefDesc:
+			retval = _equalYbExprColrefDesc(a, b);
 			break;
 
 		default:

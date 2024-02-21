@@ -90,6 +90,25 @@ Oid			MyDatabaseId = InvalidOid;
 
 Oid			MyDatabaseTableSpace = InvalidOid;
 
+bool		MyDatabaseColocated = false;
+
+/*
+ * The OID of the database used as a namespace to allocate a new object
+ * identifier.
+ */
+Oid			YbDatabaseIdForNewObjectId = InvalidOid;
+
+/*
+ * Before we fully deprecate legacy colocated databases, we need this extra
+ * variable to tell whether a colocated database is a legacy colocated
+ * database or a colocated database based on new Colocation GA implementation.
+ */
+bool        MyColocatedDatabaseLegacy = true;
+
+bool		YbTablegroupCatalogExists = false;
+
+bool		YbLoginProfileCatalogsExist = false;
+
 /*
  * DatabasePath is the path (relative to DataDir) of my database's
  * primary directory, ie, its directory in the default tablespace.
@@ -113,6 +132,8 @@ bool		IsPostmasterEnvironment = false;
 bool		IsUnderPostmaster = false;
 bool		IsBinaryUpgrade = false;
 bool		IsBackgroundWorker = false;
+
+bool		IsYsqlUpgrade = false;
 
 bool		ExitOnAnyError = false;
 

@@ -35,6 +35,9 @@
 #include "partitioning/partprune.h"
 #include "utils/rel.h"
 
+/* Yugabyte includes */
+#include "executor/ybcExpr.h"
+#include "pg_yb_utils.h"
 
 static void expand_partitioned_rtentry(PlannerInfo *root, RelOptInfo *relinfo,
 									   RangeTblEntry *parentrte,
@@ -47,7 +50,8 @@ static void expand_single_inheritance_child(PlannerInfo *root,
 											RangeTblEntry **childrte_p,
 											Index *childRTindex_p);
 static Bitmapset *translate_col_privs(const Bitmapset *parent_privs,
-									  List *translated_vars);
+									  List *translated_vars,
+									  bool is_yb_relation);
 static Bitmapset *translate_col_privs_multilevel(PlannerInfo *root,
 												 RelOptInfo *rel,
 												 RelOptInfo *parent_rel,
@@ -348,7 +352,8 @@ expand_partitioned_rtentry(PlannerInfo *root, RelOptInfo *relinfo,
 	 * that survive pruning.  Below, we will initialize child objects for the
 	 * surviving partitions.
 	 */
-	relinfo->live_parts = live_parts = prune_append_rel_partitions(relinfo);
+	relinfo->live_parts = live_parts =
+		prune_append_rel_partitions(relinfo, partdesc->oids);
 
 	/* Expand simple_rel_array and friends to hold child objects. */
 	num_live_parts = bms_num_members(live_parts);
@@ -550,12 +555,16 @@ expand_single_inheritance_child(PlannerInfo *root, RangeTblEntry *parentrte,
 	 */
 	if (childOID != parentOID)
 	{
+		bool is_yb_relation = IsYBRelation(parentrel);
 		childrte->selectedCols = translate_col_privs(parentrte->selectedCols,
-													 appinfo->translated_vars);
+													 appinfo->translated_vars,
+													 is_yb_relation);
 		childrte->insertedCols = translate_col_privs(parentrte->insertedCols,
-													 appinfo->translated_vars);
+													 appinfo->translated_vars,
+													 is_yb_relation);
 		childrte->updatedCols = translate_col_privs(parentrte->updatedCols,
-													appinfo->translated_vars);
+													appinfo->translated_vars,
+													is_yb_relation);
 	}
 	else
 	{
@@ -704,24 +713,26 @@ get_rel_all_updated_cols(PlannerInfo *root, RelOptInfo *rel)
  */
 static Bitmapset *
 translate_col_privs(const Bitmapset *parent_privs,
-					List *translated_vars)
+					List *translated_vars,
+					bool is_yb_relation)
 {
 	Bitmapset  *child_privs = NULL;
 	bool		whole_row;
 	int			attno;
 	ListCell   *lc;
+	const int firstLowInvalidAttrNumber = YBGetFirstLowInvalidAttrNumber(is_yb_relation);
 
 	/* System attributes have the same numbers in all tables */
-	for (attno = FirstLowInvalidHeapAttributeNumber + 1; attno < 0; attno++)
+	for (attno = firstLowInvalidAttrNumber + 1; attno < 0; attno++)
 	{
-		if (bms_is_member(attno - FirstLowInvalidHeapAttributeNumber,
+		if (bms_is_member(attno - firstLowInvalidAttrNumber,
 						  parent_privs))
 			child_privs = bms_add_member(child_privs,
-										 attno - FirstLowInvalidHeapAttributeNumber);
+										 attno - firstLowInvalidAttrNumber);
 	}
 
 	/* Check if parent has whole-row reference */
-	whole_row = bms_is_member(InvalidAttrNumber - FirstLowInvalidHeapAttributeNumber,
+	whole_row = bms_is_member(InvalidAttrNumber - firstLowInvalidAttrNumber,
 							  parent_privs);
 
 	/* And now translate the regular user attributes, using the vars list */
@@ -734,10 +745,10 @@ translate_col_privs(const Bitmapset *parent_privs,
 		if (var == NULL)		/* ignore dropped columns */
 			continue;
 		if (whole_row ||
-			bms_is_member(attno - FirstLowInvalidHeapAttributeNumber,
+			bms_is_member(attno - firstLowInvalidAttrNumber,
 						  parent_privs))
 			child_privs = bms_add_member(child_privs,
-										 var->varattno - FirstLowInvalidHeapAttributeNumber);
+										 var->varattno - firstLowInvalidAttrNumber);
 	}
 
 	return child_privs;
@@ -778,7 +789,7 @@ translate_col_privs_multilevel(PlannerInfo *root, RelOptInfo *rel,
 	}
 
 	/* Now translate for this child. */
-	return translate_col_privs(parent_cols, appinfo->translated_vars);
+	return translate_col_privs(parent_cols, appinfo->translated_vars, parent_rel->is_yb_relation);
 }
 
 /*
@@ -878,6 +889,7 @@ apply_child_basequals(PlannerInfo *root, RelOptInfo *parentrel,
 		{
 			Node	   *onecq = (Node *) lfirst(lc2);
 			bool		pseudoconstant;
+			RestrictInfo *childri;
 
 			/* check for pseudoconstant (no Vars or volatile functions) */
 			pseudoconstant =
@@ -889,14 +901,24 @@ apply_child_basequals(PlannerInfo *root, RelOptInfo *parentrel,
 				root->hasPseudoConstantQuals = true;
 			}
 			/* reconstitute RestrictInfo with appropriate properties */
-			childquals = lappend(childquals,
-								 make_restrictinfo(root,
-												   (Expr *) onecq,
-												   rinfo->is_pushed_down,
-												   rinfo->outerjoin_delayed,
-												   pseudoconstant,
-												   rinfo->security_level,
-												   NULL, NULL, NULL));
+			childri = make_restrictinfo(root,
+										(Expr *) onecq,
+										rinfo->is_pushed_down,
+										rinfo->outerjoin_delayed,
+										pseudoconstant,
+										rinfo->security_level,
+										NULL, NULL, NULL);
+			if (childrel->is_yb_relation)
+			{
+				/*
+				 * Even if parent clause was not pushable, parts of it still
+				 * maybe after they have been split by make_ands_implicit.
+				 * Hence re-evaluate pushability.
+				 */
+				childri->yb_pushable = rinfo->yb_pushable ||
+					YbCanPushdownExpr(childri->clause, NULL);
+			}
+			childquals = lappend(childquals, childri);
 			/* track minimum security level among child quals */
 			cq_min_security = Min(cq_min_security, rinfo->security_level);
 		}

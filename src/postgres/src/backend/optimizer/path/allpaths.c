@@ -10,6 +10,22 @@
  * IDENTIFICATION
  *	  src/backend/optimizer/path/allpaths.c
  *
+ * The following only applies to changes made to this file as part of
+ * YugaByte development.
+ *
+ * Portions Copyright (c) YugaByte, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you
+ * may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+ * implied.  See the License for the specific language governing
+ * permissions and limitations under the License.
  *-------------------------------------------------------------------------
  */
 
@@ -17,12 +33,15 @@
 
 #include <limits.h>
 #include <math.h>
+#include <utils/rel.h>
 
+#include "miscadmin.h"
 #include "access/sysattr.h"
 #include "access/tsmapi.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_proc.h"
+#include "catalog/pg_database.h"
 #include "foreign/fdwapi.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
@@ -50,6 +69,11 @@
 #include "rewrite/rewriteManip.h"
 #include "utils/lsyscache.h"
 
+/*  YB includes. */
+#include "access/yb_scan.h"
+#include "executor/ybc_fdw.h"
+#include "executor/ybcExpr.h"
+#include "pg_yb_utils.h"
 
 /* results of subquery_is_pushdown_safe */
 typedef struct pushdown_safety_info
@@ -107,7 +131,6 @@ static Path *get_cheapest_parameterized_child_path(PlannerInfo *root,
 static void accumulate_append_subpath(Path *path,
 									  List **subpaths,
 									  List **special_subpaths);
-static Path *get_singleton_append_subpath(Path *path);
 static void set_dummy_rel_pathlist(RelOptInfo *rel);
 static void set_subquery_pathlist(PlannerInfo *root, RelOptInfo *rel,
 								  Index rti, RangeTblEntry *rte);
@@ -177,6 +200,33 @@ make_one_rel(PlannerInfo *root, List *joinlist)
 			continue;
 
 		root->all_baserels = bms_add_member(root->all_baserels, brel->relid);
+	}
+
+	if (IsYugaByteEnabled())
+	{
+		for (rti = 1; rti < root->simple_rel_array_size; rti++)
+		{
+			RelOptInfo *relation = root->simple_rel_array[rti];
+
+			if (relation != NULL && relation->rtekind == RTE_RELATION)
+			{
+				RangeTblEntry *rte = root->simple_rte_array[rti];
+				if (IsYBRelationById(rte->relid)) {
+					ListCell *lc;
+					/*
+					 * Set the YugaByte FDW routine because we will use the foreign
+					 * scan API below.
+					 */
+					relation->is_yb_relation = true;
+					relation->fdwroutine = (FdwRoutine *) ybc_fdw_handler();
+					foreach(lc, relation->baserestrictinfo)
+					{
+						RestrictInfo *ri = lfirst_node(RestrictInfo, lc);
+						ri->yb_pushable = YbCanPushdownExpr(ri->clause, NULL);
+					}
+				}
+			}
+		}
 	}
 
 	/* Mark base rels as to whether we care about fast-start plans */
@@ -406,13 +456,30 @@ set_rel_size(PlannerInfo *root, RelOptInfo *rel,
 				}
 				else if (rte->tablesample != NULL)
 				{
+					if (IsYBRelationById(rte->relid))
+					{
+						/* TODO we don't support tablesample queries yet. */
+						ereport(ERROR,
+								(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+								 errmsg("'TABLESAMPLE' clause is not yet "
+										"supported by YugaByte")));
+					}
+
 					/* Sampled relation */
 					set_tablesample_rel_size(root, rel, rte);
 				}
 				else
 				{
 					/* Plain relation */
-					set_plain_rel_size(root, rel, rte);
+					if (IsYBRelationById(rte->relid))
+					{
+						set_foreign_size(root, rel, rte);
+					}
+					else
+					{
+						/* Use regular scan for initdb tables. */
+						set_plain_rel_size(root, rel, rte);
+					}
 				}
 				break;
 			case RTE_SUBQUERY:
@@ -494,6 +561,15 @@ set_rel_pathlist(PlannerInfo *root, RelOptInfo *rel,
 				}
 				else if (rte->tablesample != NULL)
 				{
+					if (IsYBRelationById(rte->relid))
+					{
+						/* TODO we don't support tablesample queries yet. */
+						ereport(ERROR,
+								(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+								errmsg("'TABLESAMPLE' clause is not yet "
+									   "supported by YugaByte")));
+					}
+
 					/* Sampled relation */
 					set_tablesample_rel_pathlist(root, rel, rte);
 				}
@@ -654,6 +730,10 @@ set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
 					return;
 			}
 
+			if (rel->is_yb_relation)
+			{
+				/* TODO(#19470) check YB specific conditions */
+			}
 			/*
 			 * There are additional considerations for appendrels, which we'll
 			 * deal with in set_append_rel_size and set_append_rel_pathlist.
@@ -1115,6 +1195,9 @@ set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
 
 		/* We have at least one live child. */
 		has_live_children = true;
+
+		if (!childRTE->inh)
+			root->yb_num_referenced_relations++;
 
 		/*
 		 * If any live child is not parallel-safe, treat the whole appendrel
@@ -1606,11 +1689,15 @@ add_paths_to_append_rel(PlannerInfo *root, RelOptInfo *rel,
 			accumulate_append_subpath(subpath, &subpaths, NULL);
 		}
 
+		subpaths_valid &= yb_has_same_batching_reqs(subpaths);
+
 		if (subpaths_valid)
 			add_path(rel, (Path *)
 					 create_append_path(root, rel, subpaths, NIL,
 										NIL, required_outer, 0, false,
 										-1));
+		else
+			break;
 	}
 
 	/*
@@ -2078,7 +2165,7 @@ accumulate_append_subpath(Path *path, List **subpaths, List **special_subpaths)
  *
  * Note: 'path' must not be a parallel-aware path.
  */
-static Path *
+Path *
 get_singleton_append_subpath(Path *path)
 {
 	Assert(!path->parallel_aware);
@@ -4142,6 +4229,8 @@ compute_parallel_worker(RelOptInfo *rel, double heap_pages, double index_pages,
 	 */
 	if (rel->rel_parallel_workers != -1)
 		parallel_workers = rel->rel_parallel_workers;
+	else if (rel->is_yb_relation)
+		parallel_workers = ybParallelWorkers(rel->tuples);
 	else
 	{
 		/*

@@ -25,6 +25,21 @@
 #include "utils/syscache.h"
 #include "utils/timestamp.h"
 
+#include "yb/yql/pggate/ybc_pggate.h"
+#include "pg_yb_utils.h"
+
+static bool
+yb_is_role_allowed_for_tserver_auth(const char* role, const char **logdetail)
+{
+	/* Currently disallow any role but "postgres" */
+	if (strcmp(role, "postgres"))
+	{
+		*logdetail = psprintf(
+			_("Role must be \"postgres\": got \"%s\"."), role);
+		return false;
+	}
+	return true;
+}
 
 /*
  * Fetch stored password for a user, for authentication.
@@ -80,6 +95,15 @@ get_role_password(const char *role, const char **logdetail)
 	}
 
 	return shadow_pass;
+}
+
+bool
+yb_get_role_password(const char *role, const char **logdetail, uint64_t* auth_key)
+{
+	if (!yb_is_role_allowed_for_tserver_auth(role, logdetail))
+		return false;
+	*auth_key = YBCGetSharedAuthKey();
+	return true;
 }
 
 /*
@@ -282,5 +306,32 @@ plain_crypt_verify(const char *role, const char *shadow_pass,
 	 */
 	*logdetail = psprintf(_("Password of user \"%s\" is in unrecognized format."),
 						  role);
+	return STATUS_ERROR;
+}
+
+/*
+ * Check given auth key for given user, and return STATUS_OK or STATUS_ERROR.
+ *
+ * 'server_auth_key' is the user's correct authentication key, as stored in
+ * tserver shared memory.
+ * 'client_auth_key' is the auth key given by the remote user.
+ *
+ * In the error case, optionally store a palloc'd string at *logdetail
+ * that will be sent to the postmaster log (but not the client).
+ */
+int
+yb_plain_key_verify(const char *role,
+					uint64_t server_auth_key,
+					uint64_t client_auth_key,
+					const char **logdetail)
+{
+	if (!yb_is_role_allowed_for_tserver_auth(role, logdetail))
+		return STATUS_ERROR;
+
+	/* Simply compare the plain auth keys */
+	if (server_auth_key == client_auth_key)
+		return STATUS_OK;
+
+	*logdetail = psprintf(_("Auth key does not match for user \"%s\"."), role);
 	return STATUS_ERROR;
 }

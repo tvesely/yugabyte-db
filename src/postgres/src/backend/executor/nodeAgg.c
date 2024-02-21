@@ -276,6 +276,13 @@
 #include "utils/syscache.h"
 #include "utils/tuplesort.h"
 
+/* Yugabyte includes */
+#include "pg_yb_utils.h"
+#include "catalog/yb_type.h"
+#include "utils/fmgroids.h"
+#include "utils/numeric.h"
+#include "utils/rel.h"
+
 /*
  * Control how many partitions are created when spilling HashAgg to
  * disk.
@@ -447,7 +454,8 @@ static void build_pertrans_for_aggref(AggStatePerTrans pertrans,
 									  Oid aggdeserialfn, Datum initValue,
 									  bool initValueIsNull, Oid *inputTypes,
 									  int numArguments);
-
+static void yb_agg_pushdown_supported(AggState *aggstate);
+static void yb_agg_pushdown(AggState *aggstate);
 
 /*
  * Select the current grouping set; affects current_set and
@@ -574,7 +582,7 @@ fetch_input_tuple(AggState *aggstate)
  * This function handles only one grouping set, already set in
  * aggstate->current_set.
  *
- * When called, CurrentMemoryContext should be the per-query context.
+ * When called, GetCurrentMemoryContext() should be the per-query context.
  */
 static void
 initialize_aggregate(AggState *aggstate, AggStatePerTrans pertrans,
@@ -661,7 +669,7 @@ initialize_aggregate(AggState *aggstate, AggStatePerTrans pertrans,
  * NB: This cannot be used for hash aggregates, as for those the grouping set
  * number has to be specified from further up.
  *
- * When called, CurrentMemoryContext should be the per-query context.
+ * When called, GetCurrentMemoryContext() should be the per-query context.
  */
 static void
 initialize_aggregates(AggState *aggstate,
@@ -814,7 +822,7 @@ advance_transition_function(AggState *aggstate,
  * and one for hashed; we do them both here, to avoid multiple evaluation of
  * the inputs.
  *
- * When called, CurrentMemoryContext should be the per-query context.
+ * When called, GetCurrentMemoryContext() should be the per-query context.
  */
 static void
 advance_aggregates(AggState *aggstate)
@@ -846,7 +854,7 @@ advance_aggregates(AggState *aggstate)
  * This function handles only one grouping set (already set in
  * aggstate->current_set).
  *
- * When called, CurrentMemoryContext should be the per-query context.
+ * When called, GetCurrentMemoryContext() should be the per-query context.
  */
 static void
 process_ordered_aggregate_single(AggState *aggstate,
@@ -938,7 +946,7 @@ process_ordered_aggregate_single(AggState *aggstate,
  * This function handles only one grouping set (already set in
  * aggstate->current_set).
  *
- * When called, CurrentMemoryContext should be the per-query context.
+ * When called, GetCurrentMemoryContext() should be the per-query context.
  */
 static void
 process_ordered_aggregate_multi(AggState *aggstate,
@@ -1028,7 +1036,7 @@ process_ordered_aggregate_multi(AggState *aggstate,
  * aggstate->current_set).
  *
  * The finalfn will be run, and the result delivered, in the
- * output-tuple context; caller's CurrentMemoryContext does not matter.
+ * output-tuple context; caller's GetCurrentMemoryContext() does not matter.
  *
  * The finalfn uses the state as set in the transno. This also might be
  * being used by another aggregate function, so it's important that we do
@@ -1122,7 +1130,7 @@ finalize_aggregate(AggState *aggstate,
 	 * If result is pass-by-ref, make sure it is in the right context.
 	 */
 	if (!peragg->resulttypeByVal && !*resultIsNull &&
-		!MemoryContextContains(CurrentMemoryContext,
+		!MemoryContextContains(GetCurrentMemoryContext(),
 							   DatumGetPointer(*resultVal)))
 		*resultVal = datumCopy(*resultVal,
 							   peragg->resulttypeByVal,
@@ -1135,7 +1143,7 @@ finalize_aggregate(AggState *aggstate,
  * Compute the output value of one partial aggregate.
  *
  * The serialization function will be run, and the result delivered, in the
- * output-tuple context; caller's CurrentMemoryContext does not matter.
+ * output-tuple context; caller's GetCurrentMemoryContext() does not matter.
  */
 static void
 finalize_partialaggregate(AggState *aggstate,
@@ -1162,6 +1170,12 @@ finalize_partialaggregate(AggState *aggstate,
 		}
 		else
 		{
+#ifdef NEIL
+/* NEIL: Need to lookinto fcinfo->args[0]
+ *    fcinfo->args[0].value vs fcinfo->arg[0]
+ *    fcinfo->args[0].isnull vs fcinfo->argnull[0]
+ */
+#endif
 			FunctionCallInfo fcinfo = pertrans->serialfn_fcinfo;
 
 			fcinfo->args[0].value =
@@ -1170,7 +1184,6 @@ finalize_partialaggregate(AggState *aggstate,
 										   pertrans->transtypeLen);
 			fcinfo->args[0].isnull = pergroupstate->transValueIsNull;
 			fcinfo->isnull = false;
-
 			*resultVal = FunctionCallInvoke(fcinfo);
 			*resultIsNull = fcinfo->isnull;
 		}
@@ -1184,7 +1197,7 @@ finalize_partialaggregate(AggState *aggstate,
 
 	/* If result is pass-by-ref, make sure it is in the right context. */
 	if (!peragg->resulttypeByVal && !*resultIsNull &&
-		!MemoryContextContains(CurrentMemoryContext,
+		!MemoryContextContains(GetCurrentMemoryContext(),
 							   DatumGetPointer(*resultVal)))
 		*resultVal = datumCopy(*resultVal,
 							   peragg->resulttypeByVal,
@@ -2124,6 +2137,252 @@ lookup_hash_entries(AggState *aggstate)
 }
 
 /*
+ * Evaluates whether plan supports pushdowns of aggregates to DocDB, and sets
+ * yb_pushdown_supported accordingly in AggState.
+ */
+static void
+yb_agg_pushdown_supported(AggState *aggstate)
+{
+	ScanState *ss;
+	ListCell *lc_agg;
+	ListCell *lc_arg;
+	bool check_outer_plan;
+
+	/* Initially set pushdown supported to false. */
+	aggstate->yb_pushdown_supported = false;
+
+	/* Phase 0 is a dummy phase, so there should be two phases. */
+	if (aggstate->numphases != 2)
+		return;
+
+	/* Plain agg strategy. */
+	if (aggstate->phase->aggstrategy != AGG_PLAIN)
+		return;
+
+	/* No GROUP BY. */
+	if (aggstate->phase->numsets != 0)
+		return;
+
+	/* Supported outer plan. */
+	if (!(IsA(outerPlanState(aggstate), ForeignScanState) ||
+		  IsA(outerPlanState(aggstate), IndexOnlyScanState) ||
+		  IsA(outerPlanState(aggstate), IndexScanState) ||
+		  IsA(outerPlanState(aggstate), YbSeqScanState)))
+		return;
+	ss = (ScanState *) outerPlanState(aggstate);
+
+	/* Relation we are scanning is a YB table. */
+	if (!IsYBRelation(ss->ss_currentRelation))
+		return;
+
+	/* No WHERE quals. */
+	if (ss->ps.qual)
+		return;
+	/* No indexquals that might be rechecked. */
+	if (IsA(ss, IndexScanState))
+	{
+		/* Also check the GUC here. */
+		if (!yb_enable_index_aggregate_pushdown)
+			return;
+
+		IndexScanState *iss = castNode(IndexScanState, ss);
+		if (iss->yb_iss_might_recheck)
+			return;
+	}
+	else if (IsA(ss, IndexOnlyScanState))
+	{
+		IndexOnlyScanState *ioss = castNode(IndexOnlyScanState, ss);
+		if (ioss->yb_ioss_might_recheck)
+			return;
+	}
+
+	check_outer_plan = false;
+
+	foreach(lc_agg, aggstate->aggs)
+	{
+		Aggref *aggref = (Aggref *) lfirst(lc_agg);
+		char *func_name = get_func_name(aggref->aggfnoid);
+
+		/* Only support COUNT/MIN/MAX/SUM. */
+		if (strcmp(func_name, "count") != 0 &&
+			strcmp(func_name, "min") != 0 &&
+			strcmp(func_name, "max") != 0 &&
+			strcmp(func_name, "sum") != 0 &&
+			strcmp(func_name, "avg") != 0)
+			return;
+
+		/* No ORDER BY. */
+		if (list_length(aggref->aggorder) != 0)
+			return;
+
+		/* No DISTINCT. */
+		if (list_length(aggref->aggdistinct) != 0)
+			return;
+
+		/* No FILTER. */
+		if (aggref->aggfilter)
+			return;
+
+		/* No array arguments. */
+		if (aggref->aggvariadic)
+			return;
+
+		/* Normal aggregate kind. */
+		if (aggref->aggkind != AGGKIND_NORMAL)
+			return;
+
+		/* Does not belong to outer plan. */
+		if (aggref->agglevelsup != 0)
+			return;
+
+		/* Simple split. */
+		if (aggref->aggsplit == AGGSPLIT_FINAL_DESERIAL)
+			return;
+
+
+		/* Aggtranstype is a supported YB key type and is not INTERNAL or NUMERIC. */
+		if (!YbDataTypeIsValidForKey(aggref->aggtranstype) ||
+			aggref->aggtranstype == INTERNALOID ||
+			aggref->aggtranstype == NUMERICOID)
+		{
+			/*
+			 * However, AVG with INT8ARRAYOID is a special case
+			 * that we support.
+			 */
+			if (!(strcmp(func_name, "avg") == 0 &&
+				aggref->aggtranstype == INT8ARRAYOID))
+				return;
+		}
+
+		/*
+		 * The builtin functions max and min imply comparison. Character type
+		 * comparison requires postgres collation info which is not accessible
+		 * by DocDB. Because DocDB only does byte-wise comparison, it will not
+		 * be correct for any non-C collations. In order to allow min/max
+		 * pushdown for a non-C collation, we need to ensure that the argument
+		 * is a key-column with a deterministic non-C collation. In such a
+		 * case we store a collation-encoded string by concatenating the
+		 * collation sort key with the original text value so that the byte-wise
+		 * comparison result is correct.
+		 */
+		if ((strcmp(func_name, "min") == 0 || strcmp(func_name, "max") == 0) &&
+			(YBIsCollationValidNonC(aggref->aggcollid) ||
+			 YBIsCollationValidNonC(aggref->inputcollid)))
+			return;
+
+		foreach(lc_arg, aggref->args)
+		{
+			TargetEntry *tle = lfirst_node(TargetEntry, lc_arg);
+
+			/* Only support simple column expressions until DocDB can eval PG exprs. */
+			Oid type = InvalidOid;
+			if (IsA(tle->expr, Var))
+			{
+				check_outer_plan = true;
+				type = castNode(Var, tle->expr)->vartype;
+			}
+			else if (IsA(tle->expr, Const))
+			{
+				Const* const_node = castNode(Const, tle->expr);
+				if (const_node->constisnull)
+					/* NULL has a type UNKNOWNOID which isn't very helpful. */
+					type = aggref->aggtranstype;
+				else if (!const_node->constbyval)
+					/* Do not support pointer-based constants yet. */
+					return;
+				else
+					type = const_node->consttype;
+			}
+			else
+				return;
+
+			/*
+			 * Only support types that are allowed to be YB keys as we cannot guarantee
+			 * we can safely perform postgres semantic compatible DocDB aggregate evaluation
+			 * otherwise.
+			 */
+			if (!YbDataTypeIsValidForKey(type))
+				return;
+		}
+	}
+
+	if (check_outer_plan)
+	{
+		/*
+		 * Check outer plan to reject case such as:
+		 *   create table foo(c0 decimal);
+		 *   select sum(r) from (select random() as r from foo) as res;
+		 *   select sum(r) from (select (null=random())::int as r from foo) as res;
+		 * However check_outer_plan will be false for case such as:
+		 *   select sum(1) from (select random() as r from foo) as res;
+		 *   select sum(1) from (select (null=random())::int as r from foo) as res;
+		 * and pushdown will still be supported.
+		 * TODO(#18122): For simplicity, we do not try to match Var between
+		 * aggref->args and outplan targetlist and simply reject once we see
+		 * any item that is not a simple column reference.  This should be
+		 * improved.
+		 */
+		ListCell   *t;
+		foreach(t, outerPlanState(aggstate)->plan->targetlist)
+		{
+			TargetEntry *tle = lfirst_node(TargetEntry, t);
+
+			if (!IsA(tle->expr, Var))
+				return;
+		}
+	}
+
+	/* If this is reached, YB pushdown is supported. */
+	aggstate->yb_pushdown_supported = true;
+}
+
+/*
+ * Populates aggregate pushdown information in the scan state.
+ */
+static void
+yb_agg_pushdown(AggState *aggstate)
+{
+	PlanState  *ps = outerPlanState(aggstate);
+	List	  **aggrefs = YbPlanStateTryGetAggrefs(ps);
+
+	/* List of aggrefs should exist uninitialized. */
+	Assert(aggrefs && *aggrefs == NIL);
+
+	for (int aggno = 0; aggno < aggstate->numaggs; ++aggno)
+	{
+		Aggref *aggref = aggstate->peragg[aggno].aggref;
+		const char *func_name = get_func_name(aggref->aggfnoid);
+
+		if (strcmp(func_name, "avg") == 0)
+		{
+			Aggref *count_aggref = makeNode(Aggref);
+			Aggref *sum_aggref = makeNode(Aggref);
+
+			count_aggref->aggfnoid = 2147;
+			count_aggref->aggtranstype = INT8OID;
+			count_aggref->aggcollid = aggref->aggcollid;
+			count_aggref->aggstar = aggref->aggstar;
+			count_aggref->args = aggref->args;
+
+			sum_aggref->aggfnoid = 2108;
+			sum_aggref->aggtranstype = INT8OID;
+			sum_aggref->aggcollid = aggref->aggcollid;
+			sum_aggref->aggstar = aggref->aggstar;
+			sum_aggref->args = aggref->args;
+
+			*aggrefs = lappend(*aggrefs, sum_aggref);
+			*aggrefs = lappend(*aggrefs, count_aggref);
+		}
+		else
+		{
+			*aggrefs = lappend(*aggrefs, aggref);
+		}
+	}
+	/* Disable projection for tuples produced by pushed down aggregate operators. */
+	ps->ps_ProjInfo = NULL;
+}
+
+/*
  * ExecAgg -
  *
  *	  ExecAgg receives tuples from its outer subplan and aggregates over
@@ -2146,13 +2405,25 @@ ExecAgg(PlanState *pstate)
 
 	if (!node->agg_done)
 	{
+		/*
+		 * Use default prefetch limit when AGGREGATE is present.
+		 * Aggregate functions combine multiple rows into one. The final LIMIT can be different from
+		 * the number of rows to be read. As a result, we have to use default prefetch limit.
+		 *
+		 * Pushdown aggregates to DocDB if the plan state meets proper conditions.
+		 */
+		if (IsYugaByteEnabled())
+		{
+			pstate->state->yb_exec_params.limit_use_default = true;
+		}
+
 		/* Dispatch based on strategy */
 		switch (node->phase->aggstrategy)
 		{
 			case AGG_HASHED:
 				if (!node->table_filled)
 					agg_fill_hash_table(node);
-				/* FALLTHROUGH */
+				switch_fallthrough();
 			case AGG_MIXED:
 				result = agg_retrieve_hash_table(node);
 				break;
@@ -2189,6 +2460,7 @@ agg_retrieve_direct(AggState *aggstate)
 	int			nextSetSize;
 	int			numReset;
 	int			i;
+	int			aggno;
 
 	/*
 	 * get state info from node
@@ -2327,6 +2599,115 @@ agg_retrieve_direct(AggState *aggstate)
 
 			Assert(aggstate->projected_set < numGroupingSets);
 			Assert(nextSetSize > 0 || aggstate->input_done);
+		}
+		else if (aggstate->yb_pushdown_supported)
+		{
+			aggstate->projected_set = 0;
+			currentSet = aggstate->projected_set;
+			select_current_set(aggstate, currentSet, false);
+
+			/* Initialize aggregates. */
+			initialize_aggregates(aggstate, pergroups, numReset);
+
+			/*
+			 * Aggs were pushed down to YB, so handle returned aggregate results. The slot
+			 * contains one value for each aggno, and there is one result per RPC response.
+			 * We need to aggregate the results from all responses.
+			 *
+			 * We special case for COUNT and sum values so it returns the proper count
+			 * aggregated across all responses.
+			 *
+			 * We also special case AVG, which is pushed down as two values:
+			 * a count and a sum.
+			 */
+			for (;;)
+			{
+				outerslot = fetch_input_tuple(aggstate);
+				if (TupIsNull(outerslot))
+				{
+					aggstate->agg_done = true;
+					break;
+				}
+
+				/*
+				 * Each AVG is responsible for two values, so the
+				 * index into the input values is no longer aligned
+				 * with aggno. So, we keep track of it separately
+				 */
+				int valno = 0;
+
+				for (aggno = 0; aggno < aggstate->numaggs; aggno++)
+				{
+					MemoryContext oldContext;
+					int transno = peragg[aggno].transno;
+					Aggref *aggref = aggstate->peragg[aggno].aggref;
+					char *func_name = get_func_name(aggref->aggfnoid);
+					AggStatePerGroup pergroup = pergroups[currentSet];
+					AggStatePerGroup pergroupstate = &pergroup[transno];
+					AggStatePerTrans pertrans = &aggstate->pertrans[transno];
+					FunctionCallInfo fcinfo = pertrans->transfn_fcinfo;
+
+					Assert(valno < outerslot->tts_nvalid);
+					Datum value = outerslot->tts_values[valno];
+					bool isnull = outerslot->tts_isnull[valno];
+
+					if (strcmp(func_name, "count") == 0)
+					{
+						/*
+						 * Sum results from each response for COUNT. It is safe to do this
+						 * directly on the datum as it is guaranteed to be an int64.
+						 */
+						oldContext = MemoryContextSwitchTo(
+							aggstate->curaggcontext->ecxt_per_tuple_memory);
+						pergroupstate->transValue += value;
+						MemoryContextSwitchTo(oldContext);
+					}
+					else if (strcmp(func_name, "avg") == 0)
+					{
+						++valno;
+						Assert(valno < outerslot->tts_nvalid);
+						Datum count_value = outerslot->tts_values[valno];
+						bool count_isnull = outerslot->tts_isnull[valno];
+
+						if (isnull || count_isnull)
+							continue;
+
+						/*
+						 * Like COUNT, add the sum and count values directly.
+						 * The datum is guaranteed to be an Int8TransTypeData.
+						 * The checking code is taken from int8_avg()
+						 * in numeric.c.
+						 */
+						oldContext = MemoryContextSwitchTo(
+							aggstate->curaggcontext->ecxt_per_tuple_memory);
+						Int8TransTypeData *transdata;
+						ArrayType *transarray = (ArrayType *)(pergroupstate->transValue);
+
+						if (ARR_HASNULL(transarray) ||
+							ARR_SIZE(transarray) != ARR_OVERHEAD_NONULLS(1) +
+							sizeof(Int8TransTypeData))
+							elog(ERROR, "expected 2-element int8 array");
+
+						transdata = (Int8TransTypeData *) ARR_DATA_PTR(transarray);
+
+						transdata->sum += value;
+						transdata->count += count_value;
+
+						MemoryContextSwitchTo(oldContext);
+					}
+					else
+					{
+						/* Set slot result as argument, then advance the transition function. */
+						fcinfo->args[1].value = value;
+						fcinfo->args[1].isnull = isnull;
+						advance_transition_function(aggstate, pertrans, pergroupstate);
+					}
+					++valno;
+				}
+
+				/* Reset per-input-tuple context after each tuple */
+				ResetExprContext(tmpcontext);
+			}
 		}
 		else
 		{
@@ -3284,7 +3665,22 @@ ExecInitAgg(Agg *node, EState *estate, int eflags)
 	if (node->aggstrategy == AGG_HASHED)
 		eflags &= ~EXEC_FLAG_REWIND;
 	outerPlan = outerPlan(node);
-	outerPlanState(aggstate) = ExecInitNode(outerPlan, estate, eflags);
+
+	/*
+	 * For YB IndexScan/IndexOnlyScan outer plan, we need to collect recheck
+	 * information, so set that eflag.  Ideally, the flag is only set for YB
+	 * relations since, later on, agg pushdown is disabled anyway for non-YB
+	 * relations, but we don't have that information at this point: the
+	 * relation is opened in the IndexScan/IndexOnlyScan node.  So set the flag
+	 * in all cases, and move the YB-relation check down there.
+	 */
+	int yb_eflags = 0;
+	if (IsYugaByteEnabled() &&
+		(IsA(outerPlan, IndexScan) || IsA(outerPlan, IndexOnlyScan)))
+		yb_eflags |= EXEC_FLAG_YB_AGG_PARENT;
+
+	outerPlanState(aggstate) = ExecInitNode(outerPlan, estate,
+											eflags | yb_eflags);
 
 	/*
 	 * initialize source tuple type.
@@ -3629,6 +4025,9 @@ ExecInitAgg(Agg *node, EState *estate, int eflags)
 		select_current_set(aggstate, 0, false);
 	}
 
+	/* Internally set whether plan supports YB agg pushdown. */
+	yb_agg_pushdown_supported(aggstate);
+
 	/*
 	 * Perform lookups of aggregate function info, and initialize the
 	 * unchanging fields of the per-agg and per-trans data.
@@ -3776,6 +4175,20 @@ ExecInitAgg(Agg *node, EState *estate, int eflags)
 		numAggTransFnArgs = get_aggregate_argtypes(aggref,
 												   aggTransFnInputTypes);
 
+		/*
+		 * If we support YB agg pushdown we set transition function input types
+		 * to be the same as the transition value that will be the type returned by
+		 * the DocDB aggregate result which we combine using the appropriate transition
+		 * function. Aggstar (e.g. COUNT(*)) do not have arguments so we skip them.
+		 */
+		if (aggstate->yb_pushdown_supported && !aggref->aggstar)
+		{
+			/* We currently only support single argument aggregates for YB pushdown. */
+			numAggTransFnArgs = 1;
+			Assert(list_length(aggref->aggargtypes) == numAggTransFnArgs);
+			aggTransFnInputTypes[0] = aggref->aggtranstype;
+		}
+
 		/* Count the "direct" arguments, if any */
 		numDirectArgs = list_length(aggref->aggdirectargs);
 
@@ -3838,6 +4251,29 @@ ExecInitAgg(Agg *node, EState *estate, int eflags)
 			}
 			else
 				transfn_oid = aggform->aggtransfn;
+
+			if (aggstate->yb_pushdown_supported && !aggref->aggstar)
+			{
+				/*
+				 * Convert SUM function to 8-byte SUM for appropriate types to match values
+				 * returned from DocDB aggregates.
+				 *
+				 * Note that we don't need to perform this for floats as they use accumulators
+				 * of the same precision as the input. Also, we don't support pushdown of 8-byte
+				 * integer SUM as PG uses a numeric type to avoid overflow which we don't yet fully
+				 * support in DocDB, so we don't need to handle that here either.
+				 */
+				if (strcmp(get_func_name(aggref->aggfnoid), "sum") == 0)
+				{
+					switch (linitial_oid(aggref->aggargtypes))
+					{
+						case INT2OID:
+						case INT4OID:
+							transfn_oid = F_INT8PL;
+							break;
+					}
+				}
+			}
 
 			aclresult = pg_proc_aclcheck(transfn_oid, aggOwner, ACL_EXECUTE);
 			if (aclresult != ACLCHECK_OK)
@@ -4005,6 +4441,12 @@ ExecInitAgg(Agg *node, EState *estate, int eflags)
 
 		/* cache compiled expression for outer slot without NULL check */
 		phase->evaltrans_cache[0][0] = phase->evaltrans;
+	}
+
+	if (IsYugaByteEnabled())
+	{
+		if (aggstate->yb_pushdown_supported)
+			yb_agg_pushdown(aggstate);
 	}
 
 	return aggstate;

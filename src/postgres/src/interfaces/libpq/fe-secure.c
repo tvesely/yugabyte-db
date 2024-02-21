@@ -413,7 +413,7 @@ retry_masked:
 				/* Set flag for EPIPE */
 				REMEMBER_EPIPE(spinfo, true);
 
-				/* FALL THRU */
+			switch_fallthrough();
 
 			case ECONNRESET:
 				conn->write_failed = true;

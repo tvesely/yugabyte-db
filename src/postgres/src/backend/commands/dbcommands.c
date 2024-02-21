@@ -15,6 +15,22 @@
  * IDENTIFICATION
  *	  src/backend/commands/dbcommands.c
  *
+ * The following only applies to changes made to this file as part of
+ * YugaByte development.
+ *
+ * Portions Copyright (c) YugaByte, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you
+ * may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+ * implied.  See the License for the specific language governing
+ * permissions and limitations under the License.
  *-------------------------------------------------------------------------
  */
 #include "postgres.h"
@@ -68,6 +84,11 @@
 #include "utils/relmapper.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
+
+/*  YB includes. */
+#include "commands/ybccmds.h"
+#include "common/pg_yb_common.h"
+#include "pg_yb_utils.h"
 
 /*
  * Create database strategy.
@@ -124,6 +145,7 @@ static bool have_createdb_privilege(void);
 static void remove_dbtablespaces(Oid db_id);
 static bool check_db_file_conflict(Oid db_id);
 static int	errdetail_busy_db(int notherbackends, int npreparedxacts);
+
 static void CreateDatabaseUsingWalLog(Oid src_dboid, Oid dboid, Oid src_tsid,
 									  Oid dst_tsid);
 static List *ScanSourceDatabasePgClass(Oid srctbid, Oid srcdbid, char *srcpath);
@@ -722,6 +744,19 @@ createdb(ParseState *pstate, const CreatedbStmt *stmt)
 	CreateDBStrategy dbstrategy = CREATEDB_WAL_LOG;
 	createdb_failure_params fparms;
 
+	/* yb variables */
+	DefElem    *dcolocated = NULL;
+	DefElem    **default_options[] = {&dtablespacename};
+	bool		dbcolocated = false;
+
+	/*
+	 * We do insert into pg_database without explicit OID, which conflicts
+	 * with OID generation logic for YSQL upgrade.
+	 * This is mostly relevant as a sanity check for tests.
+	 */
+	if (IsYsqlUpgrade)
+		elog(ERROR, "CREATE DATABASE is disallowed in YSQL upgrade mode");
+
 	/* Extract options from the statement node tree */
 	foreach(option, stmt->options)
 	{
@@ -812,6 +847,17 @@ createdb(ParseState *pstate, const CreatedbStmt *stmt)
 					 errmsg("LOCATION is not supported anymore"),
 					 errhint("Consider using tablespaces instead."),
 					 parser_errposition(pstate, defel->location)));
+		}
+		else if (strcmp(defel->defname, "colocated") == 0
+				 || strcmp(defel->defname, "colocation") == 0)
+		{
+			/* Ensure only one of colocation and colocated can be specified. */
+			if (dcolocated)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("conflicting or redundant options"),
+						 parser_errposition(pstate, defel->location)));
+			dcolocated = defel;
 		}
 		else if (strcmp(defel->defname, "oid") == 0)
 		{
@@ -919,6 +965,11 @@ createdb(ParseState *pstate, const CreatedbStmt *stmt)
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("invalid connection limit: %d", dbconnlimit)));
 	}
+	if (dcolocated && dcolocated->arg)
+		dbcolocated = defGetBoolean(dcolocated);
+	else
+		dbcolocated = YBColocateDatabaseByDefault();
+
 	if (dcollversion)
 		dbcollversion = defGetString(dcollversion);
 
@@ -953,6 +1004,71 @@ createdb(ParseState *pstate, const CreatedbStmt *stmt)
 	 */
 	if (!dbtemplate)
 		dbtemplate = "template1";	/* Default template database name */
+
+	/* Check YB options support */
+	if (YBIsUsingYBParser())
+	{
+		for (int i = lengthof(default_options); i > 0; --i)
+		{
+			DefElem *option = *default_options[i - 1];
+			if (option != NULL && option->arg != NULL)
+				ereport(YBUnsupportedFeatureSignalLevel(),
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("Value other than default for %s option is "
+								"not yet supported", option->defname),
+						 errhint("Please report the issue on "
+								 "https://github.com/YugaByte/yugabyte-db"
+								 "/issues"),
+						 parser_errposition(pstate, option->location)));
+		}
+
+		if (strcmp(dbtemplate, "template0") != 0 &&
+			strcmp(dbtemplate, "template1") != 0)
+			ereport(YBUnsupportedFeatureSignalLevel(),
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("Value other than default, template0 or template1 "
+							"for template option is not yet supported"),
+					 errhint("Please report the issue on "
+							 "https://github.com/YugaByte/yugabyte-db/issues"),
+					 parser_errposition(pstate, dtemplate->location)));
+
+		if (dbistemplate)
+			ereport(YBUnsupportedFeatureSignalLevel(),
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("Value other than default or false for "
+							"is_template option is not yet supported"),
+					 errhint("Please report the issue on "
+							 "https://github.com/YugaByte/yugabyte-db/issues"),
+					 parser_errposition(pstate, distemplate->location)));
+
+		if (encoding >= 0 && encoding != PG_UTF8)
+			ereport(YBUnsupportedFeatureSignalLevel(),
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("Value other than unicode or utf8 for encoding "
+							"option is not yet supported"),
+					 errhint("Please report the issue on "
+							 "https://github.com/yugabyte/yugabyte-db/issues"),
+					 parser_errposition(pstate, dencoding->location)));
+
+		if (!(YBIsCollationEnabled() && kTestOnlyUseOSDefaultCollation) && dcollate &&
+			dbcollate && strcmp(dbcollate, "C") != 0)
+			ereport(YBUnsupportedFeatureSignalLevel(),
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("Value other than 'C' for lc_collate "
+							"option is not yet supported"),
+					 errhint("Please report the issue on "
+							 "https://github.com/YugaByte/yugabyte-db/issues"),
+					 parser_errposition(pstate, dcollate->location)));
+
+		if (dctype && dbctype && strcmp(dbctype, "en_US.UTF-8") != 0)
+			ereport(YBUnsupportedFeatureSignalLevel(),
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("Value other than 'en_US.UTF-8' for lc_ctype "
+							"option is not yet supported"),
+					 errhint("Please report the issue on "
+							 "https://github.com/YugaByte/yugabyte-db/issues"),
+					 parser_errposition(pstate, dctype->location)));
+	}
 
 	if (!get_db_info(dbtemplate, ShareLock,
 					 &src_dboid, &src_owner, &src_encoding,
@@ -1274,15 +1390,41 @@ createdb(ParseState *pstate, const CreatedbStmt *stmt)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE)),
 					errmsg("data directory with the specified OID %u already exists", dboid));
+
+		/*
+		 * YB_TODO: Due to GH issue #19656, CREATE DATABASE will fail if the
+		 * OID was used by a database that's been dropped.
+		 */
+		if (IsYugaByteEnabled())
+			YBCCreateDatabase(dboid, dbname, src_dboid, InvalidOid, dbcolocated,
+							  /*retry_on_oid_collision=*/ NULL);
 	}
 	else
 	{
-		/* Select an OID for the new database if is not explicitly configured. */
-		do
+		/*
+		 * In vanilla PG, OIDs are assigned by a cluster-wide counter.
+		 * For YSQL, we allocate OIDs on a per-database level and share the
+		 * per-database OID range on tserver for all databases. OID collision
+		 * happens due to the same range of OIDs allocated to different tservers.
+		 * OID collision can happen for CREATE DATABASE. If it happens, we want to
+		 * keep retrying CREATE DATABASE using the next available OID.
+		 * This is needed for xcluster.
+		 */
+		bool retry_on_oid_collision = false;
+		do 
 		{
-			dboid = GetNewOidWithIndex(pg_database_rel, DatabaseOidIndexId,
-									   Anum_pg_database_oid);
-		} while (check_db_file_conflict(dboid));
+			/* Select an OID for the new database if is not explicitly configured. */
+			do
+			{
+				dboid = GetNewOidWithIndex(pg_database_rel, DatabaseOidIndexId,
+										   Anum_pg_database_oid);
+			} while (check_db_file_conflict(dboid));
+
+			retry_on_oid_collision = false;
+			if (IsYugaByteEnabled())
+				YBCCreateDatabase(dboid, dbname, src_dboid, InvalidOid, dbcolocated,
+								  &retry_on_oid_collision);
+		} while (retry_on_oid_collision);
 	}
 
 	/*
@@ -1310,6 +1452,7 @@ createdb(ParseState *pstate, const CreatedbStmt *stmt)
 	new_record[Anum_pg_database_datfrozenxid - 1] = TransactionIdGetDatum(src_frozenxid);
 	new_record[Anum_pg_database_datminmxid - 1] = TransactionIdGetDatum(src_minmxid);
 	new_record[Anum_pg_database_dattablespace - 1] = ObjectIdGetDatum(dst_deftablespace);
+
 	new_record[Anum_pg_database_datcollate - 1] = CStringGetTextDatum(dbcollate);
 	new_record[Anum_pg_database_datctype - 1] = CStringGetTextDatum(dbctype);
 	if (dbiculocale)
@@ -1339,6 +1482,12 @@ createdb(ParseState *pstate, const CreatedbStmt *stmt)
 
 	/* Register owner dependency */
 	recordDependencyOnOwner(DatabaseRelationId, dboid, datdba);
+
+	/*
+	 * Register tablespace dependency to prevent dropping database default
+	 * tablespace.
+	 */
+	recordDependencyOnTablespace(DatabaseRelationId, dboid, dst_deftablespace);
 
 	/* Create pg_shdepend entries for objects within database */
 	copyTemplateDependencies(src_dboid, dboid);
@@ -1374,19 +1523,22 @@ createdb(ParseState *pstate, const CreatedbStmt *stmt)
 	PG_ENSURE_ERROR_CLEANUP(createdb_failure_callback,
 							PointerGetDatum(&fparms));
 	{
-		/*
-		 * If the user has asked to create a database with WAL_LOG strategy
-		 * then call CreateDatabaseUsingWalLog, which will copy the database
-		 * at the block level and it will WAL log each copied block.
-		 * Otherwise, call CreateDatabaseUsingFileCopy that will copy the
-		 * database file by file.
-		 */
-		if (dbstrategy == CREATEDB_WAL_LOG)
-			CreateDatabaseUsingWalLog(src_dboid, dboid, src_deftablespace,
-									  dst_deftablespace);
-		else
-			CreateDatabaseUsingFileCopy(src_dboid, dboid, src_deftablespace,
-										dst_deftablespace);
+		if (!IsYugaByteEnabled())
+		{
+			/*
+			 * If the user has asked to create a database with WAL_LOG strategy
+			 * then call CreateDatabaseUsingWalLog, which will copy the database
+			 * at the block level and it will WAL log each copied block.
+			 * Otherwise, call CreateDatabaseUsingFileCopy that will copy the
+			 * database file by file.
+			 */
+			if (dbstrategy == CREATEDB_WAL_LOG)
+				CreateDatabaseUsingWalLog(src_dboid, dboid, src_deftablespace,
+										  dst_deftablespace);
+			else
+				CreateDatabaseUsingFileCopy(src_dboid, dboid, src_deftablespace,
+											dst_deftablespace);
+		}
 
 		/*
 		 * Close pg_database, but keep lock till commit.
@@ -1403,7 +1555,6 @@ createdb(ParseState *pstate, const CreatedbStmt *stmt)
 	}
 	PG_END_ENSURE_ERROR_CLEANUP(createdb_failure_callback,
 								PointerGetDatum(&fparms));
-
 	return dboid;
 }
 
@@ -1575,6 +1726,13 @@ dropdb(const char *dbname, bool missing_ok, bool force)
 				 errmsg("cannot drop the currently open database")));
 
 	/*
+	 * YugaByte allows dropping a database even when multiple sessions are dependent on that database.
+	 * Skip the following checks.
+	 */
+	if (IsYugaByteEnabled())
+		goto removing_database_from_system;
+
+	/*
 	 * Check whether there are active logical slots that refer to the
 	 * to-be-dropped database. The database lock we are holding prevents the
 	 * creation of new slots using the database or existing slots becoming
@@ -1607,7 +1765,7 @@ dropdb(const char *dbname, bool missing_ok, bool force)
 								  "There are %d subscriptions.",
 								  nsubscriptions, nsubscriptions)));
 
-
+removing_database_from_system:
 	/*
 	 * Attempt to terminate all existing connections to the target database if
 	 * the user has requested to do so.
@@ -1629,13 +1787,26 @@ dropdb(const char *dbname, bool missing_ok, bool force)
 				 errdetail_busy_db(notherbackends, npreparedxacts)));
 
 	/*
+	 * Check for other backends in the target database.  (Because we hold the
+	 * database lock, no new ones can start after this.)
+	 *
+	 * As in CREATE DATABASE, check this after other error conditions.
+	 */
+	if (CountOtherDBBackends(db_id, &notherbackends, &npreparedxacts))
+		ereport(ERROR,
+				(errcode(ERRCODE_OBJECT_IN_USE),
+				 errmsg("database \"%s\" is being accessed by other users",
+						dbname),
+				 errdetail_busy_db(notherbackends, npreparedxacts)));
+
+	/*
 	 * Remove the database's tuple from pg_database.
 	 */
 	tup = SearchSysCache1(DATABASEOID, ObjectIdGetDatum(db_id));
 	if (!HeapTupleIsValid(tup))
 		elog(ERROR, "cache lookup failed for database %u", db_id);
 
-	CatalogTupleDelete(pgdbrel, &tup->t_self);
+	CatalogTupleDelete(pgdbrel, tup);
 
 	ReleaseSysCache(tup);
 
@@ -1706,6 +1877,14 @@ dropdb(const char *dbname, bool missing_ok, bool force)
 	 * according to pg_database, which is not good.
 	 */
 	ForceSyncCommit();
+
+	/*
+	 * Call YugaByte to delete the entries ourselves.
+	 */
+	if (IsYugaByteEnabled())
+	{
+		YBCDropDatabase(db_id, dbname);
+	}
 }
 
 
@@ -1793,6 +1972,13 @@ RenameDatabase(const char *oldname, const char *newname)
 		elog(ERROR, "cache lookup failed for database %u", db_id);
 	namestrcpy(&(((Form_pg_database) GETSTRUCT(newtup))->datname), newname);
 	CatalogTupleUpdate(rel, &newtup->t_self, newtup);
+
+	if (IsYugaByteEnabled()) {
+		YBCPgStatement handle = NULL;
+		HandleYBStatus(YBCPgNewAlterDatabase(oldname, db_id, &handle));
+		HandleYBStatus(YBCPgAlterDatabaseRenameDatabase(handle, newname));
+		HandleYBStatus(YBCPgExecAlterDatabase(handle));
+	}
 
 	InvokeObjectPostAlterHook(DatabaseRelationId, db_id, 0);
 
@@ -2193,6 +2379,7 @@ AlterDatabase(ParseState *pstate, AlterDatabaseStmt *stmt, bool isTopLevel)
 	DefElem    *dallowconnections = NULL;
 	DefElem    *dconnlimit = NULL;
 	DefElem    *dtablespace = NULL;
+	DefElem   **unsupported_options[] = {&distemplate, &dtablespace};
 	Datum		new_record[Natts_pg_database];
 	bool		new_record_nulls[Natts_pg_database];
 	bool		new_record_repl[Natts_pg_database];
@@ -2231,6 +2418,23 @@ AlterDatabase(ParseState *pstate, AlterDatabaseStmt *stmt, bool isTopLevel)
 					(errcode(ERRCODE_SYNTAX_ERROR),
 					 errmsg("option \"%s\" not recognized", defel->defname),
 					 parser_errposition(pstate, defel->location)));
+	}
+
+	/* Check YB options support */
+	if (YBIsUsingYBParser()) {
+		for (int i = lengthof(unsupported_options); i > 0; --i) {
+			DefElem *option = *unsupported_options[i - 1];
+			if (option != NULL && option->arg != NULL) {
+				ereport(YBUnsupportedFeatureSignalLevel(),
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("Altering %s option is not yet supported",
+								option->defname),
+						 errhint("Please report the issue on "
+								 "https://github.com/YugaByte/yugabyte-db"
+								 "/issues"),
+						 parser_errposition(pstate, option->location)));
+			}
+		}
 	}
 
 	if (dtablespace)

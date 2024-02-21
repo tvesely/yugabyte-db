@@ -54,10 +54,15 @@
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 
+#include "catalog/catalog.h"
+#include "catalog/yb_type.h"
+#include "executor/ybcModifyTable.h"
+#include "pg_yb_utils.h"
+#include "yb/yql/pggate/ybc_pg_typedefs.h"
+
 /*
  * Local definitions
  */
-
 #define RI_MAX_NUMKEYS					INDEX_MAX_KEYS
 
 #define RI_INIT_CONSTRAINTHASHSIZE		64
@@ -125,6 +130,7 @@ typedef struct RI_ConstraintInfo
 	Oid			pp_eq_oprs[RI_MAX_NUMKEYS]; /* equality operators (PK = PK) */
 	Oid			ff_eq_oprs[RI_MAX_NUMKEYS]; /* equality operators (FK = FK) */
 	dlist_node	valid_link;		/* Link in list of valid entries */
+	Oid			conindid;		/* index supporting this constraint */
 } RI_ConstraintInfo;
 
 /*
@@ -233,6 +239,78 @@ static void ri_ReportViolation(const RI_ConstraintInfo *riinfo,
 							   TupleTableSlot *violatorslot, TupleDesc tupdesc,
 							   int queryno, bool partgone) pg_attribute_noreturn();
 
+/* ----------
+ * YBCBuildYBTupleIdDescriptor -
+ *
+ *	Creates ybctid descriptor for row in source table from tuple in referenced table.
+ *	Returns NULL in case at least one attribute type in source and referenced table doesn't match.
+ * ----------
+ */
+static YBCPgYBTupleIdDescriptor*
+YBCBuildYBTupleIdDescriptor(const RI_ConstraintInfo *riinfo, HeapTuple tup)
+{
+	Oid source_table_oid = riinfo->pk_relid;
+	bool using_index = false;
+	Relation idx_rel = RelationIdGetRelation(riinfo->conindid);
+	Relation source_rel = idx_rel;
+	if (idx_rel->rd_index != NULL && !idx_rel->rd_index->indisprimary)
+	{
+		Assert(IndexRelationGetNumberOfKeyAttributes(idx_rel) == riinfo->nkeys);
+		source_table_oid = riinfo->conindid;
+		using_index = true;
+	} else
+	{
+		RelationClose(idx_rel);
+		source_rel = RelationIdGetRelation(riinfo->pk_relid);
+	}
+	Oid source_dboid = YBCGetDatabaseOid(source_rel);
+	YBCPgYBTupleIdDescriptor* result = YBCCreateYBTupleIdDescriptor(
+		source_dboid, source_table_oid, riinfo->nkeys + (using_index ? 1 : 0));
+	YBCPgAttrValueDescriptor *next_attr = result->attrs;
+
+	Relation fk_rel = RelationIdGetRelation(riinfo->fk_relid);
+	YBCPgTableDesc ybc_source_table_desc = NULL;
+	HandleYBStatus(YBCPgGetTableDesc(source_dboid, source_table_oid, &ybc_source_table_desc));
+
+	TupleDesc fk_tupdesc = fk_rel->rd_att;
+	TupleDesc source_tupdesc = source_rel->rd_att;
+	for (int i = 0; i < riinfo->nkeys; ++i, ++next_attr)
+	{
+		next_attr->attr_num = using_index ? (i + 1) : riinfo->pk_attnums[i];
+		const int fk_attnum = riinfo->fk_attnums[i];
+		const Oid type_id = TupleDescAttr(fk_tupdesc, fk_attnum - 1)->atttypid;
+		/*
+		 * In case source_rel and fk_rel has different type of same attribute conversion is required
+		 * to build source_rel tuple id from fk_rel tuple.
+		 * But is might be non trivial due to user defined postgres CAST, just return NULL.
+		 * TODO(dmitry): Cast primitive types when possible int8 -> int, etc.
+		 */
+		if (TupleDescAttr(source_tupdesc, next_attr->attr_num - 1)->atttypid != type_id)
+		{
+			pfree(result);
+			result = NULL;
+			break;
+		}
+		next_attr->type_entity = YbDataTypeFromOidMod(fk_attnum, type_id);
+		/*
+		 * The foreign key search will happen on source_rel so we need to use the collation from
+		 * the source_rel column, not from fk_rel column.
+		 */
+		next_attr->collation_id =
+			TupleDescAttr(source_tupdesc, next_attr->attr_num - 1)->attcollation;
+		next_attr->datum = heap_getattr(tup, fk_attnum, fk_tupdesc, &next_attr->is_null);
+		YBCPgColumnInfo column_info = {0};
+		HandleYBTableDescStatus(YBCPgGetColumnInfo(ybc_source_table_desc,
+												   next_attr->attr_num,
+												   &column_info), ybc_source_table_desc);
+		YBSetupAttrCollationInfo(next_attr, &column_info);
+	}
+	RelationClose(fk_rel);
+	RelationClose(source_rel);
+	if (using_index && result)
+		YBCFillUniqueIndexNullAttribute(result);
+	return result;
+}
 
 /*
  * RI_FKey_check -
@@ -257,16 +335,20 @@ RI_FKey_check(TriggerData *trigdata)
 	else
 		newslot = trigdata->tg_trigslot;
 
-	/*
-	 * We should not even consider checking the row if it is no longer valid,
-	 * since it was either deleted (so the deferred check should be skipped)
-	 * or updated (in which case only the latest version of the row should be
-	 * checked).  Test its liveness according to SnapshotSelf.  We need pin
-	 * and lock on the buffer to call HeapTupleSatisfiesVisibility.  Caller
-	 * should be holding pin, but not lock.
-	 */
-	if (!table_tuple_satisfies_snapshot(trigdata->tg_relation, newslot, SnapshotSelf))
-		return PointerGetDatum(NULL);
+	/* For YB relations visibility will be handled by DocDB (storage layer). */
+	if (!IsYBRelation(trigdata->tg_relation))
+	{
+		/*
+		 * We should not even consider checking the row if it is no longer valid,
+		 * since it was either deleted (so the deferred check should be skipped)
+		 * or updated (in which case only the latest version of the row should be
+		 * checked).  Test its liveness according to SnapshotSelf.  We need pin
+		 * and lock on the buffer to call HeapTupleSatisfiesVisibility.  Caller
+		 * should be holding pin, but not lock.
+		 */
+		if (!table_tuple_satisfies_snapshot(trigdata->tg_relation, newslot, SnapshotSelf))
+			return PointerGetDatum(NULL);
+	}
 
 	/*
 	 * Get the relation descriptors of the FK and PK tables.
@@ -344,6 +426,37 @@ RI_FKey_check(TriggerData *trigdata)
 			break;
 	}
 
+	if (IsYBRelation(pk_rel))
+	{
+		/* YB_TODO(later): Do away with TTS to heaptuple conversion. */
+		bool shouldFree = true;
+		HeapTuple new_row = ExecFetchSlotHeapTuple(newslot, true, &shouldFree);
+
+		/*
+		 * Use fast path for FK check in case ybctid for row in source table can be build from
+		 * referenced table tuple.
+		 */
+		YBCPgYBTupleIdDescriptor *descr = YBCBuildYBTupleIdDescriptor(riinfo, new_row);
+		if (descr)
+		{
+			bool found = false;
+			HandleYBStatus(YBCForeignKeyReferenceExists(descr, &found));
+			pfree(descr);
+			if (shouldFree)
+				pfree(new_row);
+			if (!found)
+			{
+				ri_BuildQueryKey(&qkey, riinfo, RI_PLAN_CHECK_LOOKUPPK);
+				ri_ReportViolation(riinfo, pk_rel, fk_rel, newslot, NULL, qkey.constr_queryno,
+								   false /* partgone */);
+			}
+			table_close(pk_rel, RowShareLock);
+			return PointerGetDatum(NULL);
+		}
+		if (shouldFree)
+			pfree(new_row);
+	}
+
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
 
@@ -390,6 +503,7 @@ RI_FKey_check(TriggerData *trigdata)
 			querysep = "AND";
 			queryoids[i] = fk_type;
 		}
+
 		appendStringInfoString(&querybuf, " FOR KEY SHARE OF x");
 
 		/* Prepare and save the plan */
@@ -521,6 +635,7 @@ ri_Check_Pk_Match(Relation pk_rel, Relation fk_rel,
 			querysep = "AND";
 			queryoids[i] = pk_type;
 		}
+
 		appendStringInfoString(&querybuf, " FOR KEY SHARE OF x");
 
 		/* Prepare and save the plan */
@@ -736,7 +851,6 @@ ri_restrict(TriggerData *trigdata, bool is_no_action)
 
 	return PointerGetDatum(NULL);
 }
-
 
 /*
  * RI_FKey_cascade_del -
@@ -1411,10 +1525,10 @@ RI_Initial_Check(Trigger *trigger, Relation fk_rel, Relation pk_rel)
 	{
 		int			attno;
 
-		attno = riinfo->pk_attnums[i] - FirstLowInvalidHeapAttributeNumber;
+		attno = riinfo->pk_attnums[i] - YBGetFirstLowInvalidAttributeNumber(pk_rel);
 		pkrte->selectedCols = bms_add_member(pkrte->selectedCols, attno);
 
-		attno = riinfo->fk_attnums[i] - FirstLowInvalidHeapAttributeNumber;
+		attno = riinfo->fk_attnums[i] - YBGetFirstLowInvalidAttributeNumber(fk_rel);
 		fkrte->selectedCols = bms_add_member(fkrte->selectedCols, attno);
 	}
 
@@ -2157,6 +2271,7 @@ ri_LoadConstraintInfo(Oid constraintOid)
 	riinfo->confupdtype = conForm->confupdtype;
 	riinfo->confdeltype = conForm->confdeltype;
 	riinfo->confmatchtype = conForm->confmatchtype;
+	riinfo->conindid = conForm->conindid;
 
 	DeconstructFkConstraintRow(tup,
 							   &riinfo->nkeys,
@@ -2377,7 +2492,7 @@ ri_PerformCheck(const RI_ConstraintInfo *riinfo,
 	 * that SPI_execute_snapshot will register the snapshots, so we don't need
 	 * to bother here.
 	 */
-	if (IsolationUsesXactSnapshot() && detectNewRows)
+	if (!IsYBRelation(pk_rel) && IsolationUsesXactSnapshot() && detectNewRows)
 	{
 		CommandCounterIncrement();	/* be sure all my own work is visible */
 		test_snapshot = GetLatestSnapshot();
@@ -2404,11 +2519,20 @@ ri_PerformCheck(const RI_ConstraintInfo *riinfo,
 						   save_sec_context | SECURITY_LOCAL_USERID_CHANGE |
 						   SECURITY_NOFORCE_RLS);
 
-	/* Finally we can run the query. */
-	spi_result = SPI_execute_snapshot(qplan,
-									  vals, nulls,
-									  test_snapshot, crosscheck_snapshot,
-									  false, false, limit);
+	PG_TRY();
+	{
+		/* Finally we can run the query. */
+		spi_result = SPI_execute_snapshot(qplan, vals, nulls, test_snapshot,
+										  crosscheck_snapshot, false, false,
+										  limit);
+	}
+	PG_CATCH();
+	{
+		/* Restore UID and security context in case of execution failure */
+		SetUserIdAndSecContext(save_userid, save_sec_context);
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
 
 	/* Restore UID and security context */
 	SetUserIdAndSecContext(save_userid, save_sec_context);
@@ -3017,4 +3141,45 @@ RI_FKey_trigger_type(Oid tgfoid)
 	}
 
 	return RI_TRIGGER_NONE;
+}
+
+void
+YbAddTriggerFKReferenceIntent(Trigger *trigger, Relation fk_rel, HeapTuple new_row)
+{
+	YBCPgYBTupleIdDescriptor *descr = YBCBuildYBTupleIdDescriptor(
+		ri_FetchConstraintInfo(trigger, fk_rel, false /* rel_is_pk */), new_row);
+	/*
+	 * Check that ybctid for row in source table can be build from referenced table tuple
+	 * (i.e. no type casting is required)
+	 */
+	if (descr)
+	{
+		/*
+		 * Foreign key with at least one null value of real (non system) column
+		 * will not be checked, no need to add it into the cache.
+		 */
+		bool null_found = false;
+		for (YBCPgAttrValueDescriptor *attr = descr->attrs,
+			*end = descr->attrs + descr->nattrs;
+			attr != end && !null_found; ++attr)
+			null_found = attr->is_null && (attr->attr_num > 0);
+
+		if (!null_found)
+			HandleYBStatus(YBCAddForeignKeyReferenceIntent(descr, YBCIsRegionLocal(fk_rel)));
+		pfree(descr);
+	}
+}
+
+/*
+ * Check if a trigger description contains any non RI trigger.
+ */
+bool
+HasNonRITrigger(const TriggerDesc* trigDesc)
+{
+	for (int i = trigDesc ? trigDesc->numtriggers : 0; i > 0; i--)
+	{
+		if (RI_FKey_trigger_type(trigDesc->triggers[i - 1].tgfoid) == RI_TRIGGER_NONE)
+			return true;
+	}
+	return false;
 }

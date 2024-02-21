@@ -16,6 +16,8 @@
 
 #include <setjmp.h>
 
+#include "yb/yql/pggate/util/ybc_util.h"
+
 /* Error level codes */
 #define DEBUG5		10			/* Debugging messages, in categories of
 								 * decreasing detail. */
@@ -131,14 +133,26 @@
  * prevents gcc from making the unreachability deduction at optlevel -O0.
  *----------
  */
+/* YB_TODO (amartsinchyk)
+ * The macros for multi-thread needs review and modifications to match Pg15.
+ */
 #ifdef HAVE__BUILTIN_CONSTANT_P
 #define ereport_domain(elevel, domain, ...)	\
 	do { \
 		pg_prevent_errno_in_scope(); \
-		if (__builtin_constant_p(elevel) && (elevel) >= ERROR ? \
-			errstart_cold(elevel, domain) : \
-			errstart(elevel, domain)) \
-			__VA_ARGS__, errfinish(__FILE__, __LINE__, PG_FUNCNAME_MACRO); \
+		if (IsMultiThreadedMode()) { \
+			if (__builtin_constant_p(elevel) && (elevel) >= ERROR ? \
+				yb_errstart_cold(elevel) : \
+				yb_errstart(elevel)) \
+				__VA_ARGS__, yb_errfinish(__FILE__, __LINE__, PG_FUNCNAME_MACRO); \
+		} \
+		else \
+		{ \
+			if (__builtin_constant_p(elevel) && (elevel) >= ERROR ? \
+				errstart_cold(elevel, domain) : \
+				errstart(elevel, domain)) \
+				__VA_ARGS__, errfinish(__FILE__, __LINE__, PG_FUNCNAME_MACRO); \
+		} \
 		if (__builtin_constant_p(elevel) && (elevel) >= ERROR) \
 			pg_unreachable(); \
 	} while(0)
@@ -147,8 +161,16 @@
 	do { \
 		const int elevel_ = (elevel); \
 		pg_prevent_errno_in_scope(); \
-		if (errstart(elevel_, domain)) \
-			__VA_ARGS__, errfinish(__FILE__, __LINE__, PG_FUNCNAME_MACRO); \
+		if (IsMultiThreadedMode()) \
+		{ \
+			if (yb_errstart(elevel_)) \
+				__VA_ARGS__, yb_errfinish(__FILE__, __LINE__, PG_FUNCNAME_MACRO); \
+		} \
+		else \
+		{ \
+			if (errstart(elevel_, domain)) \
+				__VA_ARGS__, errfinish(__FILE__, __LINE__, PG_FUNCNAME_MACRO); \
+		} \
 		if (elevel_ >= ERROR) \
 			pg_unreachable(); \
 	} while(0)
@@ -165,12 +187,23 @@ extern bool errstart(int elevel, const char *domain);
 extern pg_attribute_cold bool errstart_cold(int elevel, const char *domain);
 extern void errfinish(const char *filename, int lineno, const char *funcname);
 
+/* YB_TODO (amartsinchyk)
+ * These function needs review and modifications to match Pg15.
+ */
+extern bool yb_errstart(int elevel);
+extern pg_attribute_cold bool yb_errstart_cold(int elevel);
+extern void yb_errfinish(const char *filename, int lineno, const char *funcname);
+
 extern int	errcode(int sqlerrcode);
+extern int	yb_txn_errcode(uint16_t txn_errcode);
 
 extern int	errcode_for_file_access(void);
 extern int	errcode_for_socket_access(void);
 
 extern int	errmsg(const char *fmt,...) pg_attribute_printf(1, 2);
+extern int	yb_errmsg_from_status_data(const char *fmt, const size_t nargs, const char** args);
+extern int	yb_detail_from_status_data(const char *fmt, const size_t nargs, const char** args);
+extern void yb_set_pallocd_error_file_and_func(const char* filename, const char* funcname);
 extern int	errmsg_internal(const char *fmt,...) pg_attribute_printf(1, 2);
 
 extern int	errmsg_plural(const char *fmt_singular, const char *fmt_plural,
@@ -223,7 +256,6 @@ extern int	geterrcode(void);
 extern int	geterrposition(void);
 extern int	getinternalerrposition(void);
 
-
 /*----------
  * Old-style error reporting API: to be used in this way:
  *		elog(ERROR, "portal \"%s\" not found", stmt->portalname);
@@ -231,7 +263,6 @@ extern int	getinternalerrposition(void);
  */
 #define elog(elevel, ...)  \
 	ereport(elevel, errmsg_internal(__VA_ARGS__))
-
 
 /* Support for constructing error strings separately from ereport() calls */
 
@@ -312,19 +343,19 @@ extern PGDLLIMPORT ErrorContextCallback *error_context_stack;
  */
 #define PG_TRY()  \
 	do { \
-		sigjmp_buf *_save_exception_stack = PG_exception_stack; \
+		sigjmp_buf *_save_exception_stack = yb_get_exception_stack(); \
 		ErrorContextCallback *_save_context_stack = error_context_stack; \
 		sigjmp_buf _local_sigjmp_buf; \
 		bool _do_rethrow = false; \
 		if (sigsetjmp(_local_sigjmp_buf, 0) == 0) \
 		{ \
-			PG_exception_stack = &_local_sigjmp_buf
+			yb_set_exception_stack(&_local_sigjmp_buf)
 
 #define PG_CATCH()	\
 		} \
 		else \
 		{ \
-			PG_exception_stack = _save_exception_stack; \
+			yb_set_exception_stack(_save_exception_stack); \
 			error_context_stack = _save_context_stack
 
 #define PG_FINALLY() \
@@ -332,14 +363,15 @@ extern PGDLLIMPORT ErrorContextCallback *error_context_stack;
 		else \
 			_do_rethrow = true; \
 		{ \
-			PG_exception_stack = _save_exception_stack; \
+			yb_set_exception_stack(_save_exception_stack);	\
 			error_context_stack = _save_context_stack
 
 #define PG_END_TRY()  \
 		} \
 		if (_do_rethrow) \
 				PG_RE_THROW(); \
-		PG_exception_stack = _save_exception_stack; \
+		yb_reset_error_status(); \
+		yb_set_exception_stack(_save_exception_stack); \
 		error_context_stack = _save_context_stack; \
 	} while (0)
 
@@ -396,10 +428,17 @@ typedef struct ErrorData
 	char	   *internalquery;	/* text of internally-generated query */
 	int			saved_errno;	/* errno at entry */
 
+	uint16_t	yb_txn_errcode;	/* YB transaction error cast to uint16, as returned by static_cast
+								 * of TransactionErrorTag::Decode
+								 * of Status::ErrorData(TransactionErrorTag::kCategory) */
 	/* context containing associated non-constant strings */
 	struct MemoryContextData *assoc_context;
+	bool		yb_owns_file_and_func; /* Whether we own filename/funcname. */
 } ErrorData;
 
+extern sigjmp_buf *yb_get_exception_stack(void);
+extern void yb_set_exception_stack(sigjmp_buf *new_sigjmp_buf);
+extern void yb_reset_error_status(void);
 extern void EmitErrorReport(void);
 extern ErrorData *CopyErrorData(void);
 extern void FreeErrorData(ErrorData *edata);

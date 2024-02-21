@@ -39,6 +39,9 @@
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 
+/* Yugabyte includes */
+#include "pg_yb_utils.h"
+
 static Datum ExecHashSubPlan(SubPlanState *node,
 							 ExprContext *econtext,
 							 bool *isNull);
@@ -160,7 +163,8 @@ ExecHashSubPlan(SubPlanState *node,
 			FindTupleHashEntry(node->hashtable,
 							   slot,
 							   node->cur_eq_comp,
-							   node->lhs_hash_funcs) != NULL)
+							   node->lhs_hash_funcs,
+							   node->hashtable->keyColIdx) != NULL)
 		{
 			ExecClearTuple(slot);
 			return BoolGetDatum(true);
@@ -264,7 +268,7 @@ ExecScanSubPlan(SubPlanState *node,
 	/* Initialize ArrayBuildStateAny in caller's context, if needed */
 	if (subLinkType == ARRAY_SUBLINK)
 		astate = initArrayResultAny(subplan->firstColType,
-									CurrentMemoryContext, true);
+									GetCurrentMemoryContext(), true);
 
 	/*
 	 * We are probably in a short-lived expression-evaluation context. Switch
@@ -680,10 +684,16 @@ execTuplesUnequal(TupleTableSlot *slot1,
 		if (isNull2)
 			continue;			/* can't prove anything here */
 
+		/* YB_TODO(review): Can YB code reach here at all? */
+		Datum equal;
+		if (IsYugaByteEnabled())
+			equal = FunctionCall2(&eqfunctions[i], attr1, attr2);
+		else
+			equal = FunctionCall2Coll(&eqfunctions[i],
+									  collations[i],
+									  attr1, attr2);
 		/* Apply the type-specific equality function */
-		if (!DatumGetBool(FunctionCall2Coll(&eqfunctions[i],
-											collations[i],
-											attr1, attr2)))
+		if (!DatumGetBool(equal))
 		{
 			result = true;		/* they are unequal */
 			break;
@@ -876,12 +886,12 @@ ExecInitSubPlan(SubPlan *subplan, PlanState *parent)
 
 		/* We need a memory context to hold the hash table(s) */
 		sstate->hashtablecxt =
-			AllocSetContextCreate(CurrentMemoryContext,
+			AllocSetContextCreate(GetCurrentMemoryContext(),
 								  "Subplan HashTable Context",
 								  ALLOCSET_DEFAULT_SIZES);
 		/* and a small one for the hash tables to use as temp storage */
 		sstate->hashtempcxt =
-			AllocSetContextCreate(CurrentMemoryContext,
+			AllocSetContextCreate(GetCurrentMemoryContext(),
 								  "Subplan HashTable Temp Context",
 								  ALLOCSET_SMALL_SIZES);
 		/* and a short-lived exprcontext for function evaluation */
@@ -1084,7 +1094,7 @@ ExecSetParamPlan(SubPlanState *node, ExprContext *econtext)
 	/* Initialize ArrayBuildStateAny in caller's context, if needed */
 	if (subLinkType == ARRAY_SUBLINK)
 		astate = initArrayResultAny(subplan->firstColType,
-									CurrentMemoryContext, true);
+									GetCurrentMemoryContext(), true);
 
 	/*
 	 * Must switch to per-query memory context.

@@ -44,7 +44,7 @@ override CPPFLAGS := -DFRONTEND -I. -I$(top_srcdir)/src/common $(CPPFLAGS)
 LIBS += $(PTHREAD_LIBS)
 
 # If you add objects here, see also src/tools/msvc/Mkvcbuild.pm
-
+# List Yugabyte files at the end (Not following alphabet order).
 OBJS_COMMON = \
 	archive.o \
 	base64.o \
@@ -79,7 +79,8 @@ OBJS_COMMON = \
 	unicode_norm.o \
 	username.o \
 	wait_error.o \
-	wchar.o
+	wchar.o \
+	pg_yb_common.o
 
 ifeq ($(with_ssl),openssl)
 OBJS_COMMON += \

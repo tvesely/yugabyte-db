@@ -312,7 +312,8 @@ match_pattern_prefix(Node *leftop,
 	switch (ldatatype)
 	{
 		case TEXTOID:
-			if (opfamily == TEXT_PATTERN_BTREE_FAM_OID)
+			if (opfamily == TEXT_PATTERN_BTREE_FAM_OID ||
+				opfamily == TEXT_PATTERN_LSM_FAM_OID)
 			{
 				eqopr = TextEqualOperator;
 				ltopr = TextPatternLessOperator;
@@ -350,7 +351,8 @@ match_pattern_prefix(Node *leftop,
 			rdatatype = TEXTOID;
 			break;
 		case BPCHAROID:
-			if (opfamily == BPCHAR_PATTERN_BTREE_FAM_OID)
+			if (opfamily == BPCHAR_PATTERN_BTREE_FAM_OID ||
+				opfamily == BPCHAR_PATTERN_LSM_FAM_OID)
 			{
 				eqopr = BpcharEqualOperator;
 				ltopr = BpcharPatternLessOperator;
@@ -1797,4 +1799,13 @@ string_to_bytea_const(const char *str, size_t str_len)
 	conval = PointerGetDatum(bstr);
 
 	return makeConst(BYTEAOID, -1, InvalidOid, -1, conval, false, false);
+}
+
+/*
+ * Externally exposed make_greater_string used by YB.
+ */
+Const *
+yb_make_greater_string(const Const *str_const, FmgrInfo *ltproc, Oid collation)
+{
+	return make_greater_string(str_const, ltproc, collation);
 }

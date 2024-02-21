@@ -21,11 +21,11 @@
 #include "pg_regress.h"
 
 /*
- * start a psql test process for specified file (including redirection),
+ * start a ysqlsh test process for specified file (including redirection),
  * and return process ID
  */
 static PID_TYPE
-psql_start_test(const char *testname,
+ysqlsh_start_test(const char *testname,
 				_stringlist **resultfiles,
 				_stringlist **expectfiles,
 				_stringlist **tags)
@@ -34,7 +34,7 @@ psql_start_test(const char *testname,
 	char		infile[MAXPGPATH];
 	char		outfile[MAXPGPATH];
 	char		expectfile[MAXPGPATH];
-	char		psql_cmd[MAXPGPATH * 3];
+	char		ysqlsh_cmd[MAXPGPATH * 3];
 	size_t		offset = 0;
 	char	   *appnameenv;
 
@@ -64,9 +64,9 @@ psql_start_test(const char *testname,
 
 	if (launcher)
 	{
-		offset += snprintf(psql_cmd + offset, sizeof(psql_cmd) - offset,
+		offset += snprintf(ysqlsh_cmd + offset, sizeof(ysqlsh_cmd) - offset,
 						   "%s ", launcher);
-		if (offset >= sizeof(psql_cmd))
+		if (offset >= sizeof(ysqlsh_cmd))
 		{
 			fprintf(stderr, _("command too long\n"));
 			exit(2);
@@ -77,15 +77,15 @@ psql_start_test(const char *testname,
 	 * Use HIDE_TABLEAM to hide different AMs to allow to use regression tests
 	 * against different AMs without unnecessary differences.
 	 */
-	offset += snprintf(psql_cmd + offset, sizeof(psql_cmd) - offset,
-					   "\"%s%spsql\" -X -a -q -d \"%s\" %s < \"%s\" > \"%s\" 2>&1",
+	offset += snprintf(ysqlsh_cmd + offset, sizeof(ysqlsh_cmd) - offset,
+					   "\"%s%sysqlsh\" -X -a -q -d \"%s\" %s < \"%s\" > \"%s\" 2>&1",
 					   bindir ? bindir : "",
 					   bindir ? "/" : "",
 					   dblist->str,
 					   "-v HIDE_TABLEAM=on -v HIDE_TOAST_COMPRESSION=on",
 					   infile,
 					   outfile);
-	if (offset >= sizeof(psql_cmd))
+	if (offset >= sizeof(ysqlsh_cmd))
 	{
 		fprintf(stderr, _("command too long\n"));
 		exit(2);
@@ -95,7 +95,7 @@ psql_start_test(const char *testname,
 	setenv("PGAPPNAME", appnameenv, 1);
 	free(appnameenv);
 
-	pid = spawn_process(psql_cmd);
+	pid = spawn_process(ysqlsh_cmd);
 
 	if (pid == INVALID_PID)
 	{
@@ -110,7 +110,7 @@ psql_start_test(const char *testname,
 }
 
 static void
-psql_init(int argc, char **argv)
+ysqlsh_init(int argc, char **argv)
 {
 	/* set default regression database name */
 	add_stringlist_item(&dblist, "regression");
@@ -120,7 +120,7 @@ int
 main(int argc, char *argv[])
 {
 	return regression_main(argc, argv,
-						   psql_init,
-						   psql_start_test,
+						   ysqlsh_init,
+						   ysqlsh_start_test,
 						   NULL /* no postfunc needed */ );
 }

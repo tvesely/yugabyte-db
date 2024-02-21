@@ -72,9 +72,9 @@ usage(unsigned short int pager)
 	 */
 	initPQExpBuffer(&buf);
 
-	HELP0("psql is the PostgreSQL interactive terminal.\n\n");
+	HELP0("ysqlsh is the PostgreSQL interactive terminal.\n\n");
 	HELP0("Usage:\n");
-	HELP0("  psql [OPTION]... [DBNAME [USERNAME]]\n\n");
+	HELP0("  ysqlsh [OPTION]... [DBNAME [USERNAME]]\n\n");
 
 	HELP0("General options:\n");
 	/* Display default database */
@@ -83,11 +83,11 @@ usage(unsigned short int pager)
 		env = user;
 	HELP0("  -c, --command=COMMAND    run only single command (SQL or internal) and exit\n");
 	HELPN("  -d, --dbname=DBNAME      database name to connect to (default: \"%s\")\n",
-		  env);
+		"yugabyte");
 	HELP0("  -f, --file=FILENAME      execute commands from file, then exit\n");
 	HELP0("  -l, --list               list available databases, then exit\n");
 	HELP0("  -v, --set=, --variable=NAME=VALUE\n"
-		  "                           set psql variable NAME to VALUE\n"
+		  "                           set ysqlsh variable NAME to VALUE\n"
 		  "                           (e.g., -v ON_ERROR_STOP=1)\n");
 	HELP0("  -V, --version            output version information, then exit\n");
 	HELP0("  -X, --no-psqlrc          do not read startup file (~/.psqlrc)\n");
@@ -130,22 +130,24 @@ usage(unsigned short int pager)
 	HELP0("\nConnection options:\n");
 	/* Display default host */
 	env = getenv("PGHOST");
+	/* YugaByte use localhost instead of local socket */
 	HELPN("  -h, --host=HOSTNAME      database server host or socket directory (default: \"%s\")\n",
-		  env ? env : _("local socket"));
+		  env ? env : _("localhost"));
+	/* YugaByte end */
 	/* Display default port */
 	env = getenv("PGPORT");
 	HELPN("  -p, --port=PORT          database server port (default: \"%s\")\n",
-		  env ? env : DEF_PGPORT_STR);
+		  env ? env : DEF_YBPORT_STR);
 	/* Display default user */
 	HELPN("  -U, --username=USERNAME  database user name (default: \"%s\")\n",
-		  user);
+		"yugabyte");
 	HELP0("  -w, --no-password        never prompt for password\n");
 	HELP0("  -W, --password           force password prompt (should happen automatically)\n");
 
 	HELP0("\nFor more information, type \"\\?\" (for internal commands) or \"\\help\" (for SQL\n"
-		  "commands) from within psql, or consult the psql section in the PostgreSQL\n"
+		  "commands) from within ysqlsh, or consult the ysqlsh section in YugabyteDB\n"
 		  "documentation.\n\n");
-	HELPN("Report bugs to <%s>.\n", PACKAGE_BUGREPORT);
+	HELPN("Report bugs to <%s>.\n", "https://github.com/YugaByte/yugabyte-db/issues");
 	HELPN("%s home page: <%s>\n", PACKAGE_NAME, PACKAGE_URL);
 
 	/* Now we can count the lines. */

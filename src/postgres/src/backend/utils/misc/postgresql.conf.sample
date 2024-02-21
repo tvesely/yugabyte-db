@@ -388,6 +388,10 @@
 #enable_seqscan = on
 #enable_sort = on
 #enable_tidscan = on
+#yb_enable_geolocation_costing = on
+#yb_enable_expression_pushdown = off
+#yb_enable_sequence_pushdown = on
+#yb_enable_distinct_pushdown = on
 
 # - Planner Cost Constants -
 
@@ -401,6 +405,7 @@
 #min_parallel_table_scan_size = 8MB
 #min_parallel_index_scan_size = 512kB
 #effective_cache_size = 4GB
+#yb_parallel_range_rows = 0
 
 #jit_above_cost = 100000		# perform JIT compilation if available
 					# and query more expensive than this;
@@ -579,6 +584,13 @@
 					#   %q = stop here in non-session
 					#        processes
 					#   %% = '%'
+					#	The following are yugabyte options
+					#   %C = cloud name
+					#   %R = region / data center name
+					#   %Z = availability zone / rack name
+					#   %U = cluster UUID
+					#   %N = node and cluster name
+					#   %H = current hostname
 					# e.g. '<%u%%%d> '
 #log_lock_waits = off			# log lock waits >= deadlock_timeout
 #log_recovery_conflict_waits = off	# log standby recovery conflict waits

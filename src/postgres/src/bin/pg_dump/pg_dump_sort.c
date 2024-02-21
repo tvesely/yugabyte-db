@@ -93,6 +93,7 @@ enum dbObjectTypePriorities
 	PRIO_PUBLICATION_REL,
 	PRIO_PUBLICATION_TABLE_IN_SCHEMA,
 	PRIO_SUBSCRIPTION,
+	PRIO_TABLEGROUP,
 	PRIO_DEFAULT_ACL,			/* done in ACL pass */
 	PRIO_EVENT_TRIGGER,			/* must be next to last! */
 	PRIO_REFRESH_MATVIEW		/* must be last! */
@@ -146,10 +147,11 @@ static const int dbObjectTypePriority[] =
 	PRIO_PUBLICATION,			/* DO_PUBLICATION */
 	PRIO_PUBLICATION_REL,		/* DO_PUBLICATION_REL */
 	PRIO_PUBLICATION_TABLE_IN_SCHEMA,	/* DO_PUBLICATION_TABLE_IN_SCHEMA */
-	PRIO_SUBSCRIPTION			/* DO_SUBSCRIPTION */
+	PRIO_SUBSCRIPTION,			/* DO_SUBSCRIPTION */
+	PRIO_TABLEGROUP				/* DO_TABLEGROUP */
 };
 
-StaticAssertDecl(lengthof(dbObjectTypePriority) == (DO_SUBSCRIPTION + 1),
+StaticAssertDecl(lengthof(dbObjectTypePriority) == (DO_TABLEGROUP + 1),
 				 "array length mismatch");
 
 static DumpId preDataBoundId;
@@ -471,6 +473,7 @@ TopoSort(DumpableObject **objs,
 		obj = objs[j];
 		/* Output candidate to ordering[] */
 		ordering[--i] = obj;
+
 		/* Update beforeConstraints counts of its predecessors */
 		for (k = 0; k < obj->nDeps; k++)
 		{
@@ -1336,6 +1339,11 @@ describeDumpableObject(DumpableObject *obj, char *buf, int bufsize)
 			snprintf(buf, bufsize,
 					 "TABLE %s  (ID %d OID %u)",
 					 obj->name, obj->dumpId, obj->catId.oid);
+			return;
+		case DO_TABLEGROUP:
+			snprintf(buf, bufsize,
+					"TABLEGROUP %s  (ID %d OID %u)",
+					obj->name, obj->dumpId, obj->catId.oid);
 			return;
 		case DO_TABLE_ATTACH:
 			snprintf(buf, bufsize,
