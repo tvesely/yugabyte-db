@@ -1,0 +1,43 @@
+# Routes
+# This file defines all application routes (Higher priority routes first)
+# ~~~~
+
+-> /api v1.Routes
+-> /api/v1 v1.Routes
+
+###################################################################################################
+#
+# MetaMaster endpoints.
+#
+###################################################################################################
+
+# Returns the list of masters for a given instance.
+GET     /metamaster/universe/:universeUUID            com.yugabyte.yw.controllers.MetaMasterController.get(universeUUID: java.util.UUID)
+
+# To proxy requests to master/tserver UI
+GET     /universes/:uniUUID/proxy/*proxyUrl           com.yugabyte.yw.controllers.SessionController.proxyRequest(uniUUID: java.util.UUID, proxyUrl: String, request: Request)
+
+###################################################################################################
+# Swagger Json
+###################################################################################################
+# static, sorted:
++ nocsrf
+GET     /swagger.json                    com.yugabyte.yw.controllers.PlatformApiSpec.getStaticSwaggerSpec
+
+###################################################################################################
+# Swagger UI
+###################################################################################################
+GET     /docs/                      controllers.Assets.at(path="/public/swagger-ui",file="index.html")
+GET     /docs/swagger.json          com.yugabyte.yw.controllers.PlatformApiSpec.getStaticSwaggerSpec
+GET     /docs/*file         controllers.Assets.at(path="/public/swagger-ui",file)
+
+###################################################################################################
+#
+# Static resources.
+#
+###################################################################################################
+
+# Map static resources from the /public folder to the /assets URL path
+GET     /                           controllers.UIController.index()
+GET     /$resource<api.*>           controllers.UIController.unknown(resource)
+GET     /*file                      controllers.UIController.assetOrDefault(file)
